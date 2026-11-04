@@ -1,0 +1,91 @@
+openapi: 3.1.0
+info:
+  title: secret-box API
+  version: 1.0.0
+  description: API de almacenamiento opaco de ciphertext age.
+servers:
+  - url: https://secretbox.example.com
+paths:
+  /api/v1/transfers:
+    post:
+      summary: Crear una transferencia
+      security:
+        - instanceToken: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ciphertext]
+              properties:
+                ciphertext:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Transferencia guardada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '413':
+          description: El ciphertext supera el límite configurado
+        '503':
+          description: Servidor no configurado
+  /api/v1/transfers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{32}$'
+    get:
+      summary: Descargar ciphertext
+      responses:
+        '200':
+          description: Archivo cifrado age
+          headers:
+            Content-Length:
+              schema:
+                type: integer
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: No existe o ha caducado
+    delete:
+      summary: Eliminar una transferencia
+      security:
+        - instanceToken: []
+      responses:
+        '204':
+          description: Eliminada
+        '404':
+          description: No existe
+components:
+  securitySchemes:
+    instanceToken:
+      type: http
+      scheme: bearer
+  schemas:
+    Transfer:
+      type: object
+      required: [id, size, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{32}$'
+        size:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+

@@ -1,0 +1,11 @@
+{$SECRETBOX_DOMAIN} {
+	root * /var/www/html/public
+	php_fastcgi php:9000
+	file_server
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-X-Powered-By
+	}
+}
+

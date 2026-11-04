@@ -1,0 +1,21 @@
+# Copy this file to .htaccess if you want to prepare the routes manually.
+# `php bin/configure.php` can create/update these rules during first setup.
+# The upload token belongs in a private file outside the webroot.
+# BEGIN secretbox bootstrap rules
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    RewriteRule ^(src|bin)(/|$) - [F,L]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+# END secretbox bootstrap rules
+
