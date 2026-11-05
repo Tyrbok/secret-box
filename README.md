@@ -1,133 +1,143 @@
-# secret-box
+# SecretBox
 
-Sistema personal para enviar texto, archivos y carpetas entre máquinas. El CLI cifra el paquete con [`age`](https://age-encryption.org/) antes de subirlo. El servidor PHP almacena y sirve el archivo cifrado; no recibe la passphrase ni la clave privada.
+SecretBox is a small, self-hosted tool for sending text, files, and folders between your own devices. The Python CLI encrypts each transfer with [age](https://age-encryption.org/) before upload. The PHP server stores and serves ciphertext; it never receives the passphrase or recipient private key.
 
-## Componentes
+The project is designed for a single, self-managed server installation. The current server uses one upload token shared by authorized clients. Per-device upload tokens and individual revocation are not implemented.
 
-- `client/`: CLI en Python. Usa la herramienta `age` instalada en el sistema.
-- `server/`: API HTTP en PHP, sin dependencias de Composer.
-- `contracts/`: contrato de la API.
-- `docs/`: arquitectura, amenazas y operación.
-- `deploy/`: Docker Compose y Caddy para desplegar el servidor.
+## Components
 
-## Requisitos del CLI
+- **client/**: Python command-line client.
+- **server/**: PHP HTTP API with no Composer dependencies.
+- **contracts/**: OpenAPI description of the API.
+- **deploy/**: Docker Compose and Caddy configuration.
+- **docs/**: architecture, operations, and threat model.
 
-- Python 3.11 o posterior.
-- [`uv`](https://docs.astral.sh/uv/) para instalar el CLI en un entorno aislado.
-- `age` y `age-keygen` disponibles en `PATH`.
-- PHP 8.1 o posterior en el servidor.
+## Requirements
 
-Instala age siguiendo las [instrucciones oficiales](https://age-encryption.org/install).
+- Python 3.11 or later and [uv](https://docs.astral.sh/uv/) for the CLI.
+- **age** and **age-keygen** on **PATH**.
+- PHP 8.1 or later for the web application.
+- Docker Compose for the included container deployment.
 
-Instala el CLI desde la raíz del repositorio:
+Install age using the [official instructions](https://age-encryption.org/install).
 
-```sh
+## Install and configure the CLI
+
+From the repository root:
+
+~~~sh
 make client/install
 sb configure
-```
+~~~
 
-El comando instalado es `sb`.
+The installed command is **sb**. The installer uses **uv tool install**, which keeps the CLI in an isolated environment. For a development checkout, use **make dev/setup**.
 
-Los targets `client/install` y `dev/setup` usan `uv tool install`, que mantiene el CLI en un entorno aislado del Python de Homebrew. `dev/setup` instala el checkout en modo editable.
+The configure command asks for the server URL and the upload token already configured on that server. The token must match on the server and every CLI allowed to upload or delete transfers. The CLI stores its configuration at **~/.config/secretbox/config.json** with private file permissions.
 
-`sb configure` pide la URL del servidor y el token de subida ya configurado allí. El token debe ser idéntico en el servidor y en cada CLI autorizado para subir o borrar envíos. La configuración local queda en `~/.config/secretbox/config.json` con permisos privados.
+SecretBox-owned JSON configuration files carry an independent **schema_version**. Existing client and server configurations without this field remain readable as legacy version 0; new client configuration writes use version 1. You do not need to reconfigure an existing server.
 
-## Desplegar el servidor
+## Set up the server
 
-```sh
+### Docker Compose
+
+Copy the example environment file and generate a strong random upload token:
+
+~~~sh
 cp deploy/.env.example deploy/.env
-```
-
-Edita `deploy/.env` y establece `SECRETBOX_UPLOAD_TOKEN`. Puedes generarlo con:
-
-```sh
 openssl rand -hex 32
-```
+~~~
 
-Genera el token con `openssl rand -hex 32` y guárdalo en `deploy/.env`. Después introduce ese mismo valor al ejecutar `sb configure` en cada cliente autorizado.
+Put the generated token in **deploy/.env** as **SECRETBOX_UPLOAD_TOKEN**. For local development, set **SECRETBOX_DOMAIN=:8080**. For production, set a domain whose DNS points to the server; Caddy will provision HTTPS for a valid public domain.
 
-Para desarrollo local, deja `SECRETBOX_DOMAIN=:8080`. Para producción, pon un dominio público y apunta sus registros DNS a este servidor. Caddy termina HTTPS automáticamente cuando se usa un dominio válido.
-
-```sh
+~~~sh
 docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
-```
+~~~
 
-El volumen `secretbox-data` conserva los envíos. Elimina los caducados con:
+The **secretbox-data** volume stores encrypted transfers. Remove expired transfers with:
 
-```sh
+~~~sh
 docker compose --env-file deploy/.env -f deploy/compose.yaml exec php php /var/www/html/bin/cleanup.php
-```
+~~~
 
-Programa ese comando con cron o un temporizador del sistema. Consulta [operación y despliegue](docs/operations.md).
+Schedule cleanup periodically with cron or a system timer. See [Operations](docs/operations.md).
 
-## Uso
+### Shared PHP hosting
 
-Envío protegido por passphrase aleatoria generada por age:
+The server can also run on shared hosting with PHP 8.1 or later. Upload the **server/** files to the web root, then run **php bin/configure.php** over SSH once. It creates a random upload token and stores it outside the web root. See the [shared hosting instructions](docs/operations.md#shared-php-hosting).
 
-```sh
-sb send ./informe.pdf
-sb send ./carpeta
+## Usage
+
+### Send a file or folder
+
+By default, age prompts for a passphrase for this transfer:
+
+~~~sh
+sb send ./report.pdf
+sb send ./folder
+~~~
+
+To send text, use **--text**. The CLI reads standard input; when run interactively, paste the text and press **Ctrl-D** to finish:
+
+~~~sh
 sb send --text
-```
+sb send --text < message.txt
+~~~
 
-`sb send --text` lee de la entrada estándar. Puedes pegar varias líneas y finalizar con `Ctrl-D`:
+Share the transfer ID printed by **sb**. Share the passphrase through a different channel.
 
-```sh
-sb send --text < mensaje.txt
-```
+### Receive a transfer
 
-Age mostrará una passphrase generada. Compártela por un canal distinto al identificador del envío. Después, envía el identificador que imprime `sb`.
+~~~sh
+sb receive TRANSFER_ID
+~~~
 
-Recepción:
+Use **--output** to choose a destination path. Text is written to standard output when no destination is specified:
 
-```sh
-sb receive IDENTIFICADOR
-```
+~~~sh
+sb receive TRANSFER_ID --output ./destination
+~~~
 
-Para guardar texto en un archivo o cambiar el destino de un archivo/carpeta:
+### Use recipient keys
 
-```sh
-sb receive IDENTIFICADOR --output ./destino
-```
+Create an age identity on each receiving device:
 
-Para tus propios dispositivos, genera una identidad en cada equipo receptor:
+~~~sh
+sb keygen --name laptop
+~~~
 
-```sh
-sb keygen --name portatil
-```
+Keep the private identity on the device that will decrypt transfers. Share its **age1...** public key with senders:
 
-Guarda la clave privada en el equipo que descifrará el envío y comparte la clave pública `age1...` con los emisores. Envía cifrando para esa clave:
+~~~sh
+sb send --recipient age1... ./report.pdf
+sb receive TRANSFER_ID --identity ~/.config/secretbox/identities/laptop.txt
+~~~
 
-```sh
-sb send --recipient age1... ./informe.pdf
-sb receive IDENTIFICADOR --identity ~/.config/secretbox/identities/portatil.txt
-```
+Delete a transfer before it expires:
 
-Borra un envío antes de que caduque:
+~~~sh
+sb delete TRANSFER_ID
+~~~
 
-```sh
-sb delete IDENTIFICADOR
-```
+## Server deployment with ss
 
-El formato de transferencia y sus límites están descritos en [la arquitectura](docs/architecture.md) y [el modelo de amenazas](docs/threat-model.md).
+The repository includes an example configuration for the personal **ss** synchronization script. That script is not included in this project.
 
-Para sincronizar `server/` con el script personal `ss`, configura `server/.sisy.json` a partir de `server/.sisy.example.json` y ejecuta `make server/sync`. La configuración real está ignorada por Git; su lista `exclude` evita subir credenciales, datos locales, archivos de desarrollo y utilidades no destinadas al webroot. El target ejecuta el modo de subida de `ss`, que sincroniza con `rsync --delete`.
+1. Copy **server/.sisy.example.json** to **server/.sisy.json** and configure the target for your own server.
+2. Review its **exclude** list. It intentionally excludes credentials, environment files, local data, the real **.sisy.json**, and the host-specific **.htaccess**.
+3. Run **make server/sync**. This target calls **ss -u** from **server/**. The uploader uses **rsync --delete**, so review the target and exclusions before syncing.
 
-### DreamHost Shared
+The real **server/.sisy.json** and **server/.htaccess** are ignored by Git. Only **server/.sisy.example.json** and **server/.htaccess.example** belong in the repository. The generated **.htaccess** contains host-specific routing and access rules; the sync exclusions preserve it and **.secretbox-config-path** on the remote server, even when rsync uses **--delete**. Keep these exclusions if you customize the sample.
 
-Después de configurar `server/.sisy.json`, sincroniza el servidor desde tu Mac:
+## Security
 
-```sh
-make server/sync
-```
+The server stores encrypted content and minimal transfer metadata. It cannot decrypt a transfer, but it can observe network metadata, delete ciphertext, or deny service. Downloads use a random transfer ID and do not require the upload token, so treat the ID as a secret link. The current shared upload token authorizes uploads and deletion for every client that has it.
 
-Entra por SSH, cambia al directorio webroot al que sincroniza `ss` y ejecuta el configurador una sola vez:
+Read the [architecture](docs/architecture.md), [threat model](docs/threat-model.md), and [security reporting guide](SECURITY.md) before exposing an instance publicly.
 
-```sh
-php bin/configure.php
-```
+## Acknowledgements
 
-El script genera un token aleatorio de 32 bytes y lo guarda en `~/.config/secretbox/server.json`, fuera del webroot, con permisos `600` (el directorio queda en `700`). Imprime el token una vez para que lo introduzcas al ejecutar `sb configure` en cada cliente autorizado. También crea `.secretbox-config-path`, que solo contiene la ruta al JSON privado, y añade reglas de Apache para enrutar la API y bloquear el acceso web a los archivos ocultos, `src/` y `bin/`. El `.htaccess` y el puntero quedan excluidos de `ss`, así que futuras sincronizaciones no los reemplazan ni eliminan. Las transferencias también se guardan fuera del webroot, junto a la configuración privada.
+This project was developed with assistance from OpenAI Codex. The maintainer reviews and takes responsibility for the published code and security decisions.
 
-El configurador solo funciona desde CLI y se detiene si ya existe el archivo de configuración, su puntero o una directiva `SetEnv` para el token en `.htaccess`. Si habías añadido esa directiva siguiendo una configuración manual anterior, quítala antes de ejecutar el script. El PHP de SSH puede ser distinto del que usa el sitio web: el configurador admite PHP 7.1 o posterior, pero la aplicación web necesita PHP 8.1 o posterior. Para otra instalación, ejecuta el script en el webroot de esa instalación.
+## License
 
+Distributed under the MIT License. See [LICENSE](LICENSE).

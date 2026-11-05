@@ -1,4 +1,4 @@
-"""Integración con age y age-keygen."""
+"""Integration with age and age-keygen."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ def _binary(name: str) -> str:
     path = shutil.which(name)
     if path is None:
         raise RuntimeError(
-            f"No se encontró `{name}` en PATH. Instala age con `brew install age` en macOS, "
-            "o sigue las instrucciones para tu sistema en https://age-encryption.org/install."
+            f"Could not find {name} on PATH. Install age with brew install age on macOS, "
+            "or follow the instructions for your system at https://age-encryption.org/install."
         )
     return path
 
@@ -42,7 +42,7 @@ def encrypt_bundle(
         process.stdin.close()
         status = process.wait()
         if status != 0:
-            raise RuntimeError(f"age terminó con código {status}")
+            raise RuntimeError(f"age exited with status {status}")
     except BaseException:
         if process.stdin and not process.stdin.closed:
             process.stdin.close()
@@ -60,13 +60,13 @@ def decrypt_bundle(encrypted_path: Path, bundle_path: Path, identities: list[Pat
     command.extend(["--output", str(bundle_path), str(encrypted_path)])
     result = subprocess.run(command, check=False)
     if result.returncode != 0:
-        raise RuntimeError(f"age terminó con código {result.returncode}")
+        raise RuntimeError(f"age exited with status {result.returncode}")
 
 
 def generate_identity(name: str, identities_dir: Path) -> tuple[Path, str]:
     keygen = _binary("age-keygen")
     if not name or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for character in name):
-        raise ValueError("El nombre solo puede contener letras, números, guion y guion bajo")
+        raise ValueError("Name may contain only letters, numbers, hyphens, and underscores")
     identities_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = identities_dir / f"{name}.txt"
     if path.exists():
@@ -78,7 +78,7 @@ def generate_identity(name: str, identities_dir: Path) -> tuple[Path, str]:
         os.umask(previous_umask)
     if result.returncode != 0:
         path.unlink(missing_ok=True)
-        raise RuntimeError(f"age-keygen terminó con código {result.returncode}")
+        raise RuntimeError(f"age-keygen exited with status {result.returncode}")
     os.chmod(path, 0o600)
     public_result = subprocess.run(
         [keygen, "-y", str(path)],
@@ -88,10 +88,10 @@ def generate_identity(name: str, identities_dir: Path) -> tuple[Path, str]:
     )
     if public_result.returncode != 0:
         path.unlink(missing_ok=True)
-        raise RuntimeError("No se pudo obtener la clave pública de la identidad")
+        raise RuntimeError("Could not read the identity's public key")
     recipient = public_result.stdout.strip()
     if not recipient.startswith("age1"):
         path.unlink(missing_ok=True)
-        raise RuntimeError("age-keygen devolvió una clave pública inesperada")
+        raise RuntimeError("age-keygen returned an unexpected public key")
     return path, recipient
 

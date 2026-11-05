@@ -15,5 +15,5 @@ foreach ($store->expiredIds() as $id) {
         $deleted++;
     }
 }
-fwrite(STDOUT, "Eliminadas {$deleted} transferencias caducadas.\n");
+fwrite(STDOUT, "Deleted {$deleted} expired transfers.\n");
 

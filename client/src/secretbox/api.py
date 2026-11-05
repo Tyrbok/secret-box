@@ -1,4 +1,4 @@
-"""Cliente HTTP pequeño basado en la biblioteca estándar."""
+"""Small HTTP client based on the Python standard library."""
 
 from __future__ import annotations
 
@@ -69,12 +69,12 @@ def upload(server: str, token: str, encrypted_path: Path) -> dict[str, object]:
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
-            raise RuntimeError("El servidor devolvió una respuesta JSON inválida") from exc
+            raise RuntimeError("The server returned an invalid JSON response") from exc
         if not isinstance(data, dict):
-            raise RuntimeError("El servidor devolvió una respuesta inválida")
+            raise RuntimeError("The server returned an invalid response")
         return data
     except http.client.HTTPException as exc:
-        raise RuntimeError(f"Error HTTP al subir: {exc}") from exc
+        raise RuntimeError(f"HTTP upload error: {exc}") from exc
     finally:
         connection.close()
 
@@ -104,7 +104,7 @@ def download(server: str, transfer_id: str, destination: Path) -> None:
             while chunk := response.read(1024 * 1024):
                 output.write(chunk)
     except http.client.HTTPException as exc:
-        raise RuntimeError(f"Error HTTP al descargar: {exc}") from exc
+        raise RuntimeError(f"HTTP download error: {exc}") from exc
     finally:
         connection.close()
 
@@ -122,7 +122,7 @@ def delete(server: str, token: str, transfer_id: str) -> None:
         if response.status != 204:
             raise RuntimeError(_error_body(response))
     except http.client.HTTPException as exc:
-        raise RuntimeError(f"Error HTTP al borrar: {exc}") from exc
+        raise RuntimeError(f"HTTP delete error: {exc}") from exc
     finally:
         connection.close()
 

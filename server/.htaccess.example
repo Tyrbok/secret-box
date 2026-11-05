@@ -1,6 +1,6 @@
-# Copy this file to .htaccess if you want to prepare the routes manually.
-# `php bin/configure.php` can create/update these rules during first setup.
-# The upload token belongs in a private file outside the webroot.
+# Copy this file to .htaccess to configure the routes manually.
+# php bin/configure.php can create these rules during initial setup.
+# Store the upload token in a private file outside the web root.
 # BEGIN secretbox bootstrap rules
 Options -Indexes
 
@@ -18,4 +18,3 @@ Options -Indexes
     Require all denied
 </FilesMatch>
 # END secretbox bootstrap rules
-

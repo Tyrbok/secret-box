@@ -1,45 +1,65 @@
-# Operación
+# Operations
 
-## Requisitos del servidor
+## Server requirements
 
-- Docker Compose.
-- PHP 8.1 o posterior para el servidor.
-- Un dominio con DNS apuntando al servidor para producción, y los puertos 80/443 accesibles para Caddy.
-- Un volumen persistente para `secretbox-data` y espacio libre suficiente.
+- Docker Compose for the container deployment, or PHP 8.1 or later for a direct PHP deployment.
+- For production HTTPS with Caddy: a domain pointed at the server and inbound ports 80 and 443 available.
+- Persistent storage for transfer ciphertext and enough free disk space.
 
-## Configuración
+## Configure the Docker deployment
 
-Copia `deploy/.env.example` a `deploy/.env`, establece `SECRETBOX_UPLOAD_TOKEN` y configura el dominio. Genera el token con `openssl rand -hex 32` y usa el mismo valor en el servidor y en cada CLI autorizado para subir o borrar. El archivo `.env` está excluido de Git.
+Copy **deploy/.env.example** to **deploy/.env**, set **SECRETBOX_UPLOAD_TOKEN**, and choose a domain. Generate a token with:
 
-La configuración del CLI se guarda en `~/.config/secretbox/config.json` con permisos `0600`. Las identidades age creadas con `sb keygen` se guardan en `~/.config/secretbox/identities/` con permisos `0600`.
+~~~sh
+openssl rand -hex 32
+~~~
 
-## DreamHost Shared
+Use the same token on the server and in every CLI allowed to upload or delete transfers. The **.env** file is excluded from Git.
 
-Después de sincronizar `server/` con `make server/sync`, entra por SSH al webroot y ejecuta `php bin/configure.php`. El script es solo CLI y de un solo uso: genera un token de 32 bytes, crea `~/.config/secretbox/server.json` fuera del webroot con permisos `600`, crea el directorio privado con permisos `700`, y guarda una referencia sin el secreto en `.secretbox-config-path`. Añade reglas de Apache para las rutas de la API y para impedir el acceso web a archivos ocultos, `src/` y `bin/`. Si aún tienes una directiva `SetEnv` para el token en `.htaccess` de una configuración manual previa, quítala antes de ejecutar el script. Si ya configuraste el servidor antes del reenvío de Authorization, añade las reglas de reescritura del ejemplo al `.htaccess` remoto, justo después de `RewriteEngine On`; ese archivo se excluye de `ss` y no se actualiza con la sincronización.
+The CLI configuration is stored at **~/.config/secretbox/config.json** with mode **0600**. Identities created by **sb keygen** are stored under **~/.config/secretbox/identities/** with mode **0600**.
 
-Copia el token que imprime el script y úsalo al configurar cada cliente autorizado con `sb configure`. Las transferencias se guardan fuera del webroot, en el directorio privado de configuración. Las exclusiones de `server/.sisy.json` conservan `.htaccess` y `.secretbox-config-path` durante la sincronización con `rsync --delete`, y dejan fuera el propio `.sisy.json` y su ejemplo.
+The client JSON file has a **schema_version** field. Older client files without it are treated as version 0 and continue to work; running **sb configure** writes version 1. The server's private **server.json** also accepts legacy unversioned files, so existing hosting setups do not need reconfiguration. New files created by **bin/configure.php** include version 1.
 
-## Caducidad
+## Shared PHP hosting
 
-El servidor rechaza descargas caducadas y elimina esos archivos al intentar descargarlos. También ofrece `bin/cleanup.php` para borrar transferencias caducadas sin esperar una descarga. Programa su ejecución periódica:
+On shared hosting, upload the contents of **server/** to the web root. Run **php bin/configure.php** over SSH from that web root, once. The script is CLI-only and refuses to overwrite existing configuration. It generates a 32-byte random upload token, writes **~/.config/secretbox/server.json** outside the web root with mode **0600**, creates the private directory with mode **0700**, and stores a pointer to the JSON file in **.secretbox-config-path**. The pointer contains the path, not the token.
 
-```cron
-*/15 * * * * docker compose --env-file /ruta/secret-box/deploy/.env -f /ruta/secret-box/deploy/compose.yaml exec -T php php /var/www/html/bin/cleanup.php
-```
+The configurator adds Apache rules to route API requests and deny web access to hidden files, **src/**, and **bin/**. It also forwards the Authorization header for PHP/FastCGI. If you previously set **SECRETBOX_UPLOAD_TOKEN** in **.htaccess**, remove that directive before running the configurator. For an existing installation created before Authorization forwarding was added, add the rewrite rules from **server/.htaccess.example** immediately after **RewriteEngine On** in the remote **.htaccess**.
 
-## Copias de seguridad
+The web application's runtime needs PHP 8.1 or later. The one-time configurator itself supports PHP 7.1 or later, so the SSH CLI version may differ from the web runtime version.
 
-El volumen solo contiene ciphertext y metadatos de transferencia. Una copia permite restaurar envíos aún vigentes, pero no sustituye las claves privadas ni las passphrases de los usuarios.
+The script prints the generated token once. Enter that same value with **sb configure** on each authorized client. Transfers are stored outside the web root next to the private configuration file.
 
-## Desarrollo local del servidor
+### Synchronizing with the personal ss script
 
-Desde la raíz, define un token solo para desarrollo y arranca el servidor integrado de PHP:
+The project does not include the personal **ss** synchronization utility. To use it:
 
-```sh
+1. Copy **server/.sisy.example.json** to **server/.sisy.json** and set the site and build path for your own account.
+2. Review every entry in **exclude** before deployment. The sample excludes secrets, environment files, local storage, development files, the real **.sisy.json**, and **.htaccess**.
+3. From the repository root, run **make server/sync**. It invokes **ss -u** from **server/**.
+
+The sync utility uploads with **rsync --delete**. The exclusion list is therefore essential: it preserves remote **.htaccess** and **.secretbox-config-path** and prevents private local files from being uploaded. Keep **.sisy.json**, the real **.htaccess**, and credentials out of Git. Only the sanitized **.sisy.example.json** and **.htaccess.example** should be versioned. If you need to update host rules, edit the remote **.htaccess** deliberately; syncing does not replace the host-specific file.
+
+## Expiry and cleanup
+
+The server rejects expired downloads and deletes expired files when a download is attempted. The **bin/cleanup.php** script can delete expired transfers without waiting for a download. Schedule it periodically:
+
+~~~cron
+*/15 * * * * docker compose --env-file /path/to/secret-box/deploy/.env -f /path/to/secret-box/deploy/compose.yaml exec -T php php /var/www/html/bin/cleanup.php
+~~~
+
+## Backups
+
+The data volume contains ciphertext and transfer metadata. A backup can restore transfers that have not expired, but it does not replace recipients' private identities or passphrases.
+
+## Local server development
+
+Set a development-only token and start PHP's built-in server:
+
+~~~sh
 export SECRETBOX_UPLOAD_TOKEN="$(openssl rand -hex 32)"
 export SECRETBOX_STORAGE_DIR="/tmp/secretbox-data"
 php -S 127.0.0.1:8080 -t server/public server/public/index.php
-```
+~~~
 
-Configura el CLI con `http://127.0.0.1:8080`. No uses HTTP en una red pública.
-
+Configure the CLI with **http://127.0.0.1:8080**. Do not use HTTP over a public network.

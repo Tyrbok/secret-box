@@ -14,7 +14,16 @@ server/vendor/
 deploy/.env
 deploy/data/
 
-# Personal deployment target and credentials; only the example is versioned.
+# Secrets and host-specific deployment state. Keep sanitized *.example files.
+.env
+.env.*
+!**/.env.example
 **/.sisy.json
-server/.htaccess
+**/.htaccess
+**/.secretbox-config-path
+*.age
+*.token
+*.secret
+*.pem
+*.key
 

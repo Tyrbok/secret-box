@@ -1,4 +1,4 @@
-"""Empaquetado y extracción segura del contenido previo a age."""
+"""Bundle creation and safe extraction before age encryption."""
 
 from __future__ import annotations
 
@@ -28,13 +28,13 @@ def _safe_name(name: str) -> str:
         or "\\" in name
         or "\x00" in name
     ):
-        raise ValueError(f"Nombre de archivo no válido: {name!r}")
+        raise ValueError(f"Invalid file name: {name!r}")
     return name
 
 
 def _tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo:
     if not (info.isfile() or info.isdir()):
-        raise ValueError(f"No se admiten enlaces ni archivos especiales: {info.name}")
+        raise ValueError(f"Symbolic links and special files are not supported: {info.name}")
     return info
 
 
@@ -45,7 +45,7 @@ def write_bundle(
     text: bytes | None = None,
 ) -> None:
     if (source is None) == (text is None):
-        raise ValueError("Indica exactamente un archivo/carpeta o texto")
+        raise ValueError("Specify exactly one file, directory, or text input")
 
     if text is not None:
         name = "text.txt"
@@ -56,9 +56,9 @@ def write_bundle(
         if not source.exists():
             raise ValueError(f"No existe: {source}")
         if source.is_symlink():
-            raise ValueError("No se admite como origen un enlace simbólico")
+            raise ValueError("Symbolic links cannot be used as a source")
         if not (source.is_file() or source.is_dir()):
-            raise ValueError("El origen debe ser un archivo normal o una carpeta")
+            raise ValueError("Source must be a regular file or directory")
         name = _safe_name(source.name)
         kind = "directory" if source.is_dir() else "file"
 
@@ -97,20 +97,20 @@ def write_bundle(
 def _read_manifest(archive: tarfile.TarFile) -> tuple[dict[str, object], tarfile.TarInfo]:
     first = archive.next()
     if first is None or first.name != MANIFEST or not first.isfile() or first.size > MAX_MANIFEST_BYTES:
-        raise ValueError("El paquete no contiene un manifiesto válido")
+        raise ValueError("Bundle does not contain a valid manifest")
     stream = archive.extractfile(first)
     if stream is None:
-        raise ValueError("No se pudo leer el manifiesto del paquete")
+        raise ValueError("Could not read the bundle manifest")
     try:
         data = json.loads(stream.read(MAX_MANIFEST_BYTES + 1).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("El manifiesto no es JSON UTF-8 válido") from exc
+        raise ValueError("Manifest is not valid UTF-8 JSON") from exc
     if not isinstance(data, dict) or data.get("version") != 1:
-        raise ValueError("Versión de paquete no compatible")
+        raise ValueError("Unsupported bundle version")
     if data.get("kind") not in {"file", "directory", "text"}:
-        raise ValueError("Tipo de contenido no válido")
+        raise ValueError("Invalid content type")
     if not isinstance(data.get("name"), str):
-        raise ValueError("Nombre del contenido no válido")
+        raise ValueError("Invalid content name")
     data["name"] = _safe_name(data["name"])
     return data, first
 
@@ -129,9 +129,9 @@ def _extract_to_stage(archive: tarfile.TarFile, stage: Path, manifest: dict[str,
             continue
         entries += 1
         if entries > MAX_ARCHIVE_ENTRIES:
-            raise ValueError("El paquete contiene demasiadas entradas")
+            raise ValueError("Bundle contains too many entries")
         if member.name in seen:
-            raise ValueError("El paquete contiene rutas duplicadas")
+            raise ValueError("Bundle contains duplicate paths")
         seen.add(member.name)
         raw_name = member.name
         path = PurePosixPath(raw_name)
@@ -143,54 +143,54 @@ def _extract_to_stage(archive: tarfile.TarFile, stage: Path, manifest: dict[str,
             or not path.parts
             or path.parts[0] != "payload"
         ):
-            raise ValueError("El paquete contiene una ruta no segura")
+            raise ValueError("Bundle contains an unsafe path")
         if not (member.isfile() or member.isdir()):
-            raise ValueError("El paquete contiene enlaces o archivos especiales")
+            raise ValueError("Bundle contains links or special files")
         if kind == "text" and raw_name != "payload/text.txt":
-            raise ValueError("El paquete de texto contiene rutas inesperadas")
+            raise ValueError("Text bundle contains unexpected paths")
         if kind == "text" and not member.isfile():
-            raise ValueError("El contenido de texto debe ser un archivo normal")
+            raise ValueError("Text content must be a regular file")
         if kind == "file" and raw_name != f"payload/{name}":
-            raise ValueError("El paquete de archivo contiene rutas inesperadas")
+            raise ValueError("File bundle contains unexpected paths")
         if kind == "directory" and path.parts[1:2] != (name,):
-            raise ValueError("El paquete de carpeta contiene rutas inesperadas")
+            raise ValueError("Directory bundle contains unexpected paths")
 
         target = stage.joinpath(*path.parts)
         if not target.resolve().is_relative_to(stage.resolve()):
-            raise ValueError("La ruta de extracción sale del destino")
+            raise ValueError("Extraction path escapes the destination")
         if member.isdir():
             target.mkdir(mode=0o700, parents=True, exist_ok=True)
             continue
         total_size += member.size
         if member.size < 0 or total_size > MAX_EXTRACTED_BYTES:
-            raise ValueError("El contenido supera el límite de extracción local")
+            raise ValueError("Content exceeds the local extraction limit")
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         source = archive.extractfile(member)
         if source is None:
-            raise ValueError(f"No se pudo leer {member.name}")
+            raise ValueError(f"Could not read {member.name}")
         remaining = member.size
         with target.open("xb") as output:
             os.chmod(target, 0o600)
             while remaining:
                 chunk = source.read(min(1024 * 1024, remaining))
                 if not chunk:
-                    raise ValueError(f"El archivo {member.name} está truncado")
+                    raise ValueError(f"File {member.name} is truncated")
                 output.write(chunk)
                 remaining -= len(chunk)
 
     if kind == "text":
         expected = "payload/text.txt"
         if expected not in seen:
-            raise ValueError("Falta el contenido de texto")
+            raise ValueError("Text content is missing")
         return payload_root / "text.txt"
     if kind == "file":
         expected = f"payload/{name}"
         if expected not in seen or not (payload_root / name).is_file():
-            raise ValueError("Falta el archivo del paquete")
+            raise ValueError("Bundle file is missing")
         return payload_root / name
     directory = payload_root / name
     if not directory.is_dir():
-        raise ValueError("Falta la carpeta del paquete")
+        raise ValueError("Bundle directory is missing")
     return directory
 
 

@@ -49,7 +49,17 @@ function configured_upload_token(): string
         return '';
     }
     $config = json_decode($contents, true);
-    $token = is_array($config) ? ($config['upload_token'] ?? '') : '';
+    if (!is_array($config)) {
+        return '';
+    }
+    // Missing schema_version identifies the legacy version 0 format.
+    $schemaVersion = array_key_exists('schema_version', $config)
+        ? $config['schema_version']
+        : 0;
+    if (!is_int($schemaVersion) || !in_array($schemaVersion, [0, 1], true)) {
+        return '';
+    }
+    $token = $config['upload_token'] ?? '';
     return is_string($token) ? $token : '';
 }
 
@@ -57,12 +67,12 @@ function require_instance_token(): void
 {
     $expected = configured_upload_token();
     if (strlen($expected) < 32 || $expected === 'CHANGE_ME') {
-        respond(503, ['error' => 'El servidor no está configurado']);
+        respond(503, ['error' => 'Server is not configured']);
     }
     $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
     if (!preg_match('/^Bearer\s+(.+)$/i', $header, $matches)
         || !hash_equals($expected, trim($matches[1]))) {
-        respond(401, ['error' => 'No autorizado']);
+        respond(401, ['error' => 'Unauthorized']);
     }
 }
 
@@ -82,16 +92,8 @@ if ($basePath !== '' && $basePath !== '.') {
 }
 
 if ($method === 'GET' && $requestPath === '/') {
-    http_response_code(200);
-    header('Cache-Control: no-store');
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!doctype html><html lang="es"><head><meta charset="utf-8">'
-        . '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        . '<title>Inicio</title><style>'
-        . 'html,body{height:100%;margin:0}body{display:grid;place-items:center;'
-        . 'background:#111;color:#fff;font:16px system-ui,sans-serif}'
-        . '</style></head><body><p>Hola mundo</p></body></html>';
-    exit;
+    $token = configured_upload_token();
+    respond(200, ['ok' => strlen($token) >= 32 && $token !== 'CHANGE_ME']);
 }
 
 if ($method === 'GET' && $requestPath === '/healthz') {
@@ -108,21 +110,21 @@ if ($method === 'POST' && $requestPath === '/api/v1/transfers') {
                 ? ($upload['error'] ?? UPLOAD_ERR_NO_FILE)
                 : UPLOAD_ERR_NO_FILE;
             if ($uploadError === UPLOAD_ERR_INI_SIZE || $uploadError === UPLOAD_ERR_FORM_SIZE) {
-                respond(413, ['error' => 'La subida supera el límite permitido por PHP']);
+                respond(413, ['error' => 'Upload exceeds the limit allowed by PHP']);
             }
             if ($uploadError !== UPLOAD_ERR_OK) {
-                respond(400, ['error' => 'No se recibió un archivo cifrado válido']);
+                respond(400, ['error' => 'No valid encrypted file was received']);
             }
             $temporary = $upload['tmp_name'] ?? null;
             if (!is_string($temporary) || !is_uploaded_file($temporary)) {
-                respond(400, ['error' => 'No se recibió un archivo cifrado válido']);
+                respond(400, ['error' => 'No valid encrypted file was received']);
             }
             $input = fopen($temporary, 'rb');
         } else {
             $input = fopen('php://input', 'rb');
         }
         if ($input === false) {
-            throw new RuntimeException('No se pudo leer el contenido de la subida');
+            throw new RuntimeException('Could not read the uploaded content');
         }
         try {
             $store = TransferStore::fromEnvironment();
@@ -139,7 +141,7 @@ if ($method === 'POST' && $requestPath === '/api/v1/transfers') {
         respond(413, ['error' => $exception->getMessage()]);
     } catch (Throwable $exception) {
         error_log('secretbox upload failed: ' . $exception->getMessage());
-        respond(500, ['error' => 'No se pudo guardar la transferencia']);
+        respond(500, ['error' => 'Could not store the transfer']);
     }
 }
 
@@ -153,7 +155,7 @@ if (preg_match('#^/api/v1/transfers/([A-Za-z0-9_-]{32})$#', $requestPath, $match
         if ($method === 'GET') {
             $file = $store->pathForDownload($id);
             if ($file === null) {
-                respond(404, ['error' => 'Transferencia no encontrada o caducada']);
+                respond(404, ['error' => 'Transfer not found or expired']);
             }
             header('Cache-Control: no-store, private');
             header('Content-Type: application/octet-stream');
@@ -164,15 +166,15 @@ if (preg_match('#^/api/v1/transfers/([A-Za-z0-9_-]{32})$#', $requestPath, $match
         }
         if ($method === 'DELETE') {
             if (!$store->delete($id)) {
-                respond(404, ['error' => 'Transferencia no encontrada']);
+                respond(404, ['error' => 'Transfer not found']);
             }
             respond(204);
         }
     } catch (Throwable $exception) {
         error_log('secretbox transfer request failed: ' . $exception->getMessage());
-        respond(500, ['error' => 'Error interno']);
+        respond(500, ['error' => 'Internal server error']);
     }
 }
 
-respond(404, ['error' => 'Ruta no encontrada']);
+respond(404, ['error' => 'Route not found']);
 

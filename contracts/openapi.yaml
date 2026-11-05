@@ -2,13 +2,28 @@ openapi: 3.1.0
 info:
   title: secret-box API
   version: 1.0.0
-  description: API de almacenamiento opaco de ciphertext age.
+  description: Opaque storage API for age-encrypted ciphertext.
 servers:
   - url: https://secretbox.example.com
 paths:
+  /:
+    get:
+      summary: Check basic configuration
+      description: Returns a generic boolean indicating whether an upload token is configured.
+      responses:
+        '200':
+          description: Configuration check
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
   /api/v1/transfers:
     post:
-      summary: Crear una transferencia
+      summary: Create a transfer
       security:
         - instanceToken: []
       requestBody:
@@ -24,15 +39,15 @@ paths:
                   format: binary
       responses:
         '201':
-          description: Transferencia guardada
+          description: Transfer stored
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Transfer'
         '413':
-          description: El ciphertext supera el límite configurado
+          description: Ciphertext exceeds the configured limit
         '503':
-          description: Servidor no configurado
+          description: Server is not configured
   /api/v1/transfers/{id}:
     parameters:
       - name: id
@@ -42,10 +57,10 @@ paths:
           type: string
           pattern: '^[A-Za-z0-9_-]{32}$'
     get:
-      summary: Descargar ciphertext
+      summary: Download ciphertext
       responses:
         '200':
-          description: Archivo cifrado age
+          description: age-encrypted file
           headers:
             Content-Length:
               schema:
@@ -56,16 +71,16 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: No existe o ha caducado
+          description: Transfer does not exist or has expired
     delete:
-      summary: Eliminar una transferencia
+      summary: Delete a transfer
       security:
         - instanceToken: []
       responses:
         '204':
-          description: Eliminada
+          description: Transfer deleted
         '404':
-          description: No existe
+          description: Transfer does not exist
 components:
   securitySchemes:
     instanceToken:

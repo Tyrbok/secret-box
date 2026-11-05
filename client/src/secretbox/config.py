@@ -1,4 +1,4 @@
-"""Configuración local del CLI."""
+"""Local CLI configuration."""
 
 from __future__ import annotations
 
@@ -8,6 +8,10 @@ import os
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
+
+
+CONFIG_SCHEMA_VERSION = 1
+SUPPORTED_CONFIG_SCHEMA_VERSIONS = {0, CONFIG_SCHEMA_VERSION}
 
 
 def config_dir() -> Path:
@@ -26,20 +30,25 @@ def read_config() -> dict[str, str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"No se pudo leer la configuración {path}: {exc}") from exc
+        raise RuntimeError(f"Could not read configuration at {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise RuntimeError(f"La configuración {path} debe ser un objeto JSON")
+        raise RuntimeError(f"Configuration at {path} must be a JSON object")
+    schema_version = data.get("schema_version", 0)
+    if type(schema_version) is not int or schema_version not in SUPPORTED_CONFIG_SCHEMA_VERSIONS:
+        raise RuntimeError(
+            f"Unsupported configuration schema version in {path}: {schema_version!r}"
+        )
     return {key: value for key, value in data.items() if isinstance(value, str)}
 
 
 def validate_server(server: str) -> str:
     parsed = urlsplit(server)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("La URL debe empezar por http:// o https:// y tener un host")
+        raise ValueError("URL must start with http:// or https:// and include a host")
     if parsed.username is not None or parsed.password is not None:
-        raise ValueError("No incluyas credenciales en la URL del servidor")
+        raise ValueError("Do not include credentials in the server URL")
     if parsed.query or parsed.fragment:
-        raise ValueError("La URL del servidor no debe incluir query ni fragmento")
+        raise ValueError("Server URL must not include a query or fragment")
     return server.rstrip("/")
 
 
@@ -55,7 +64,7 @@ def save_config(values: dict[str, str]) -> Path:
         mode="w", encoding="utf-8", dir=directory, prefix=".config-", delete=False
     ) as handle:
         temporary = Path(handle.name)
-        json.dump(values, handle, indent=2)
+        json.dump({**values, "schema_version": CONFIG_SCHEMA_VERSION}, handle, indent=2)
         handle.write("\n")
     temporary.chmod(0o600)
     os.replace(temporary, path)
@@ -65,24 +74,24 @@ def save_config(values: dict[str, str]) -> Path:
 def configure() -> None:
     current = read_config()
     default = current.get("server", "https://secretbox.example.com")
-    server = input(f"URL del servidor [{default}]: ").strip() or default
+    server = input(f"Server URL [{default}]: ").strip() or default
     server = validate_server(server)
 
-    print("Introduce el token de subida que ya configuraste en el servidor.")
-    token = getpass.getpass("Token de subida: ")
+    print("Enter the upload token already configured on the server.")
+    token = getpass.getpass("Upload token: ")
     if not token:
-        raise ValueError("El token no puede estar vacío")
+        raise ValueError("Token must not be empty")
     if len(token.encode("utf-8")) < 32:
-        raise ValueError("El token debe tener al menos 32 bytes")
+        raise ValueError("Token must contain at least 32 bytes")
 
     path = save_config({"server": server, "token": token})
-    print(f"Configuración guardada en {path}")
+    print(f"Configuration saved to {path}")
 
 def server_setting(server_override: str | None = None) -> str:
     config = read_config()
     server = server_override or os.environ.get("SECRETBOX_SERVER") or config.get("server")
     if not server:
-        raise RuntimeError("Falta la URL del servidor. Ejecuta `sb configure`.")
+        raise RuntimeError("Server URL is missing. Run sb configure.")
     return validate_server(server)
 
 
@@ -91,7 +100,7 @@ def connection_settings(server_override: str | None = None) -> tuple[str, str]:
     server = server_setting(server_override)
     token = os.environ.get("SECRETBOX_TOKEN") or config.get("token")
     if not token:
-        raise RuntimeError("Falta el token de subida. Ejecuta `sb configure` en un equipo autorizado.")
+        raise RuntimeError("Upload token is missing. Run sb configure on an authorized device.")
     return server, token
 
 

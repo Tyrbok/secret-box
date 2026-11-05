@@ -1,25 +1,24 @@
-# Modelo de amenazas
+# Threat model
 
-## Protege
+## What SecretBox protects
 
-- La confidencialidad del contenido frente al operador del servidor, al proveedor de hosting y a quien obtenga solo una copia del almacenamiento.
-- La integridad del ciphertext durante almacenamiento y transporte, mediante age y HTTPS.
-- El acceso casual a descargas, mediante IDs aleatorios difíciles de adivinar.
+- Content confidentiality from the server operator, hosting provider, or anyone who obtains only a copy of server storage.
+- Ciphertext integrity in storage and transit through age and HTTPS.
+- Casual download access through random, hard-to-guess transfer IDs.
 
-## No protege
+## What SecretBox does not protect
 
-- Un equipo emisor o receptor comprometido, malware, capturas de pantalla o una clave privada copiada.
-- Una passphrase débil o compartida junto al ID por el mismo canal. Usa la passphrase aleatoria de age o una clave pública de destinatario.
-- La disponibilidad. El servidor puede estar apagado, borrar un envío o aplicar sus límites de almacenamiento.
-- La privacidad de metadatos de red. El servidor y el proxy ven IP, hora, tamaño aproximado y caducidad.
-- La identidad del remitente. La passphrase compartida no permite distinguir qué participante creó un envío.
+- A compromised sending or receiving device, malware, screenshots, or a copied private identity.
+- A weak passphrase or a passphrase shared through the same channel as the transfer ID. Use age's generated passphrase or a recipient public key.
+- Availability. The server can go offline, delete a transfer, or enforce storage limits.
+- Network metadata privacy. The server and proxy can see IP addresses, time, approximate size, and expiry.
+- Sender identity. A shared passphrase does not identify which participant created a transfer.
 
-## Decisiones operativas
+## Operational guidance
 
-- Publica la API detrás de HTTPS. No expongas PHP-FPM directamente a Internet.
-- Genera un token de instancia aleatorio de al menos 32 bytes y guárdalo en el servidor y en la configuración privada de cada CLI que pueda subir o borrar.
-- Mantén el almacenamiento fuera del webroot y con permisos restringidos al usuario PHP.
-- No registres tokens en logs. Trata los IDs como enlaces de capacidad y limita la retención de logs del proxy.
-- El descifrado y la extracción ocurren localmente. El CLI rechaza rutas de archivo peligrosas y enlaces simbólicos en paquetes recibidos.
-- El CLI guarda temporalmente el ciphertext y el paquete descifrado bajo un directorio temporal privado y los elimina al terminar. El borrado de archivos no garantiza saneamiento físico en SSD, snapshots o copias de seguridad.
-
+- Serve the API over HTTPS. Do not expose PHP-FPM directly to the Internet.
+- Generate an instance upload token with at least 32 random bytes. Store it on the server and in the private configuration of each CLI authorized to upload or delete.
+- Keep transfer storage outside the web root and restrict access to the PHP runtime user.
+- Do not log tokens. Treat transfer IDs as bearer download links and limit proxy log retention.
+- Decryption and extraction happen locally. The CLI rejects unsafe archive paths and symbolic links in received bundles.
+- The CLI temporarily stores ciphertext and decrypted bundles in a private temporary directory and removes them when finished. File deletion does not guarantee physical erasure from SSDs, snapshots, or backups.
