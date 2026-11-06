@@ -25,7 +25,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"sb {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("configure", help="Configure the server URL and upload token")
+    subparsers.add_parser("configure", help="Configure the server URL and optional upload token")
 
     send_parser = subparsers.add_parser("send", help="Encrypt and send a file, directory, or text")
     send_parser.add_argument("source", nargs="?", type=Path, help="File or directory to send")

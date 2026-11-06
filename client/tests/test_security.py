@@ -51,6 +51,40 @@ class SecurityTests(unittest.TestCase):
         with patch.dict(os.environ, {"SECRETBOX_TOKEN": "explicit-destination-token"}):
             self.assertEqual(config.connection_settings("https://other.example")[1], "explicit-destination-token")
 
+    def test_configure_without_token(self):
+        with patch("builtins.input", return_value="https://trusted.example"), \
+                patch.object(config.getpass, "getpass", return_value=""), \
+                patch("builtins.print"):
+            config.configure()
+        self.assertEqual(config.read_config(), {"server": "https://trusted.example"})
+        self.assertEqual(config.server_setting(), "https://trusted.example")
+        with self.assertRaisesRegex(RuntimeError, "required to send or delete"):
+            config.connection_settings()
+        with patch.dict(os.environ, {"SECRETBOX_TOKEN": "T" * 64}):
+            self.assertEqual(config.connection_settings(), ("https://trusted.example", "T" * 64))
+
+    def test_configure_blank_removes_saved_token(self):
+        config.save_config({"server": "https://trusted.example", "token": "T" * 64})
+        with patch("builtins.input", return_value=""), \
+                patch.object(config.getpass, "getpass", return_value=""), \
+                patch("builtins.print"):
+            config.configure()
+        self.assertEqual(config.read_config(), {"server": "https://trusted.example"})
+
+    def test_configure_validates_optional_token(self):
+        for token in ("short", "T" * 64):
+            with self.subTest(token_length=len(token)), \
+                    patch("builtins.input", return_value="https://trusted.example"), \
+                    patch.object(config.getpass, "getpass", return_value=token), \
+                    patch("builtins.print"):
+                if len(token) < 32:
+                    with self.assertRaisesRegex(ValueError, "at least 32 bytes"):
+                        config.configure()
+                    self.assertFalse(config.config_path().exists())
+                else:
+                    config.configure()
+                    self.assertEqual(config.connection_settings(), ("https://trusted.example", token))
+
     def make_bundle(self):
         path = self.root / "bundle.tar.gz"
         with path.open("wb") as output:

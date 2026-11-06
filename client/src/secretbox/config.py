@@ -84,14 +84,16 @@ def configure() -> None:
     server = input(f"Server URL [{default}]: ").strip() or default
     server = validate_server(server)
 
-    print("Enter the upload token already configured on the server.")
-    token = getpass.getpass("Upload token: ")
-    if not token:
-        raise ValueError("Token must not be empty")
-    if len(token.encode("utf-8")) < 32:
+    print("An upload token is only needed to send or delete transfers.")
+    print("Leave blank to save without a token, removing any previously saved token.")
+    token = getpass.getpass("Upload token (optional): ")
+    if token and len(token.encode("utf-8")) < 32:
         raise ValueError("Token must contain at least 32 bytes")
 
-    path = save_config({"server": server, "token": token})
+    values = {"server": server}
+    if token:
+        values["token"] = token
+    path = save_config(values)
     print(f"Configuration saved to {path}")
 
 def server_setting(server_override: str | None = None) -> str:
@@ -112,7 +114,7 @@ def connection_settings(server_override: str | None = None) -> tuple[str, str]:
             raise RuntimeError("Refusing to send the saved token to a different server. Run sb configure or explicitly set SECRETBOX_TOKEN for this destination.")
         token = config.get("token")
     if not token:
-        raise RuntimeError("Upload token is missing. Run sb configure on an authorized device.")
+        raise RuntimeError("An upload token is required to send or delete transfers. Run sb configure or set SECRETBOX_TOKEN.")
     return server, token
 
 

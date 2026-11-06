@@ -32,7 +32,7 @@ sb configure
 
 The installed command is **sb**. The installer uses **uv tool install**, which keeps the CLI in an isolated environment. For a development checkout, use **make dev/setup**.
 
-The configure command asks for the server URL and the upload token already configured on that server. Give each CLI its own active token from the server. The CLI stores its configuration at **~/.config/secretbox/config.json** with private file permissions.
+The configure command asks for the server URL and an optional upload token. Leave the token blank to use **sb list** and **sb receive** without upload credentials; doing so also removes any previously saved token. **sb send** and **sb delete** require an active token, saved with **sb configure** or supplied through **SECRETBOX_TOKEN**. Give each CLI that sends or deletes transfers its own active token from the server. The CLI stores its configuration at **~/.config/secretbox/config.json** with private file permissions.
 
 SecretBox-owned JSON configuration files carry an independent **schema_version**. Existing client and server configurations without this field remain readable as legacy version 0; new client configuration writes use version 1 and new server configurations use version 2. Legacy server configurations continue to work; use the explicit migration in [Upload tokens](docs/upload-tokens.md) to enable independent device tokens.
 
