@@ -68,8 +68,12 @@ $configPath = $configDirectory . '/server.json';
 $managedRules = <<<'HTACCESS'
 # BEGIN secretbox bootstrap rules
 Options -Indexes
+LimitRequestBody 104873984
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    RewriteCond %{REQUEST_METHOD} ^(POST|DELETE)$
+    RewriteCond %{HTTP:Authorization} !^Bearer\s+\S{32,}$ [NC]
+    RewriteRule ^ - [R=401,L]
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
     RewriteRule ^(src|bin)(/|$) - [F,L]
@@ -97,13 +101,33 @@ if ($existingHtaccess !== null) {
     }
 }
 
+$userIniPath = $siteRoot . '/.user.ini';
+if (is_link($userIniPath)) {
+    stop('Refusing to use a symbolic link for .user.ini.');
+}
+if (!file_exists($userIniPath)) {
+    $settings = "upload_max_filesize=100M\npost_max_size=101M\nmax_file_uploads=1\n"
+        . "max_input_time=300\nmax_execution_time=300\ndisplay_errors=Off\n";
+    $handle = fopen($userIniPath, 'x');
+    if ($handle === false) {
+        stop('Could not create .user.ini.');
+    }
+    $written = fwrite($handle, $settings);
+    fclose($handle);
+    if ($written !== strlen($settings)) {
+        stop('Could not write the complete .user.ini settings.');
+    }
+}
+
 try {
     $token = bin2hex(random_bytes(32));
 } catch (Throwable $exception) {
     stop('Could not generate a secure random token.');
 }
 $configContents = json_encode(
-    ['schema_version' => 1, 'upload_token' => $token],
+    ['schema_version' => 2, 'upload_tokens' => ['default' => [
+        'sha256' => hash('sha256', $token), 'created_at' => gmdate(DATE_ATOM),
+    ]]],
     JSON_UNESCAPED_SLASHES
 ) . "\n";
 $pointerContents = $configPath . "\n";
@@ -138,7 +162,7 @@ if (!$configWritten || !$pointerWritten
 }
 
 fwrite(STDOUT, "Configuration created outside the web root: {$configPath}\n");
-fwrite(STDOUT, "Enter this token with sb configure on authorized clients:\n\n");
+fwrite(STDOUT, "Initial token: default. Enter it with sb configure on one device; use bin/tokens.php add for others:\n\n");
 fwrite(STDOUT, $token . "\n");
 fwrite(STDOUT, "Save it now: the script will not show it again or overwrite the configuration.\n");
 

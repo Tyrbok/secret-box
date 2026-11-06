@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: secret-box API
-  version: 1.0.0
+  version: 1.1.0
   description: Opaque storage API for age-encrypted ciphertext.
 servers:
   - url: https://secretbox.example.com
@@ -24,8 +24,9 @@ paths:
   /api/v1/transfers:
     post:
       summary: Create a transfer
+      description: Requires any active upload token. Tokens are managed and revoked through the server CLI.
       security:
-        - instanceToken: []
+        - uploadToken: []
       requestBody:
         required: true
         content:
@@ -44,8 +45,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Transfer'
+        '401':
+          description: Upload token is missing, invalid, or revoked
         '413':
           description: Ciphertext exceeds the configured limit
+        '429':
+          description: Another upload is in progress; retry after the Retry-After delay
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+        '507':
+          description: Total storage or transfer count quota exceeded
         '503':
           description: Server is not configured
   /api/v1/transfers/{id}:
@@ -74,18 +85,24 @@ paths:
           description: Transfer does not exist or has expired
     delete:
       summary: Delete a transfer
+      description: Any active upload token may delete a transfer by ID, regardless of which device uploaded it.
       security:
-        - instanceToken: []
+        - uploadToken: []
       responses:
         '204':
           description: Transfer deleted
+        '401':
+          description: Upload token is missing, invalid, or revoked
+        '503':
+          description: Server has no usable token configuration
         '404':
           description: Transfer does not exist
 components:
   securitySchemes:
-    instanceToken:
+    uploadToken:
       type: http
       scheme: bearer
+      description: An active named upload token, or the legacy single token before migration.
   schemas:
     Transfer:
       type: object

@@ -7,6 +7,7 @@ ini_set('display_errors', '0');
 header('X-Content-Type-Options: nosniff');
 
 require_once __DIR__ . '/../src/TransferStore.php';
+require_once __DIR__ . '/../src/UploadTokens.php';
 
 function respond(int $status, array $body = []): void
 {
@@ -19,59 +20,18 @@ function respond(int $status, array $body = []): void
     exit;
 }
 
-function configured_upload_token(): string
-{
-    $token = getenv('SECRETBOX_UPLOAD_TOKEN');
-    if (is_string($token) && $token !== '') {
-        return $token;
-    }
-
-    $configPath = getenv('SECRETBOX_UPLOAD_TOKEN_FILE') ?: '';
-    if ($configPath === '') {
-        $pointerPath = dirname(__DIR__) . '/.secretbox-config-path';
-        if (!is_file($pointerPath) || !is_readable($pointerPath)) {
-            return '';
-        }
-        $configPath = trim((string) file_get_contents($pointerPath));
-    }
-    $resolvedConfigPath = realpath($configPath);
-    $siteRoot = realpath(dirname(__DIR__));
-    if ($resolvedConfigPath === false || $siteRoot === false
-        || !is_file($resolvedConfigPath) || !is_readable($resolvedConfigPath)) {
-        return '';
-    }
-    $sitePrefix = rtrim($siteRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
-    if ($resolvedConfigPath === $siteRoot || strncmp($resolvedConfigPath, $sitePrefix, strlen($sitePrefix)) === 0) {
-        return '';
-    }
-    $contents = file_get_contents($resolvedConfigPath);
-    if ($contents === false) {
-        return '';
-    }
-    $config = json_decode($contents, true);
-    if (!is_array($config)) {
-        return '';
-    }
-    // Missing schema_version identifies the legacy version 0 format.
-    $schemaVersion = array_key_exists('schema_version', $config)
-        ? $config['schema_version']
-        : 0;
-    if (!is_int($schemaVersion) || !in_array($schemaVersion, [0, 1], true)) {
-        return '';
-    }
-    $token = $config['upload_token'] ?? '';
-    return is_string($token) ? $token : '';
-}
-
 function require_instance_token(): void
 {
-    $expected = configured_upload_token();
-    if (strlen($expected) < 32 || $expected === 'CHANGE_ME') {
+    try {
+        $config = SecretBox\UploadTokens::load();
+        if (!SecretBox\UploadTokens::configured($config)) {
+            respond(503, ['error' => 'Server is not configured']);
+        }
+    } catch (Throwable $exception) {
         respond(503, ['error' => 'Server is not configured']);
     }
     $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
-    if (!preg_match('/^Bearer\s+(.+)$/i', $header, $matches)
-        || !hash_equals($expected, trim($matches[1]))) {
+    if (!SecretBox\UploadTokens::accepts($config, $header)) {
         respond(401, ['error' => 'Unauthorized']);
     }
 }
@@ -92,8 +52,12 @@ if ($basePath !== '' && $basePath !== '.') {
 }
 
 if ($method === 'GET' && $requestPath === '/') {
-    $token = configured_upload_token();
-    respond(200, ['ok' => strlen($token) >= 32 && $token !== 'CHANGE_ME']);
+    try {
+        $ready = SecretBox\UploadTokens::configured(SecretBox\UploadTokens::load());
+    } catch (Throwable $exception) {
+        $ready = false;
+    }
+    respond(200, ['ok' => $ready]);
 }
 
 if ($method === 'GET' && $requestPath === '/healthz') {
@@ -137,6 +101,11 @@ if ($method === 'POST' && $requestPath === '/api/v1/transfers') {
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         exit;
+    } catch (\SecretBox\StorageBusyException $exception) {
+        header('Retry-After: 1');
+        respond(429, ['error' => $exception->getMessage()]);
+    } catch (\SecretBox\StorageQuotaException $exception) {
+        respond(507, ['error' => $exception->getMessage()]);
     } catch (LengthException $exception) {
         respond(413, ['error' => $exception->getMessage()]);
     } catch (Throwable $exception) {

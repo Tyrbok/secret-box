@@ -3,9 +3,15 @@
 # Store the upload token in a private file outside the web root.
 # BEGIN secretbox bootstrap rules
 Options -Indexes
+LimitRequestBody 104873984
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    # Reject missing/malformed credentials before PHP receives multipart uploads.
+    # Full token verification still happens in PHP on shared hosting.
+    RewriteCond %{REQUEST_METHOD} ^(POST|DELETE)$
+    RewriteCond %{HTTP:Authorization} !^Bearer\s+\S{32,}$ [NC]
+    RewriteRule ^ - [R=401,L]
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
     RewriteRule ^(src|bin)(/|$) - [F,L]

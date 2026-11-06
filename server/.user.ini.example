@@ -1,0 +1,7 @@
+; Copy to .user.ini on PHP/FastCGI shared hosting. No secrets belong here.
+upload_max_filesize = 100M
+post_max_size = 101M
+max_file_uploads = 1
+max_input_time = 300
+max_execution_time = 300
+display_errors = Off

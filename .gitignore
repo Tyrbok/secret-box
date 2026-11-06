@@ -20,6 +20,7 @@ deploy/data/
 !**/.env.example
 **/.sisy.json
 **/.htaccess
+**/.user.ini
 **/.secretbox-config-path
 *.age
 *.token

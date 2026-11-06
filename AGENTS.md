@@ -15,7 +15,7 @@ This file records the project's architecture and the constraints that changes mu
 - Use age for encryption. Do not add a custom cryptographic format or send passphrases/private identities to the server.
 - The client bundles input locally, encrypts it, and uploads only ciphertext over HTTPS.
 - The server stores ciphertext plus minimal expiry metadata outside the web root where the host permits it. It does not parse age payloads.
-- The current server has one instance upload token shared by authorized clients. Upload and delete require this token; download uses the unguessable transfer ID. Do not document per-device tokens or revocation as implemented.
+- The server supports named upload tokens with independent revocation. Store only SHA-256 hashes of high-entropy generated tokens in server JSON schema version 2. Keep legacy versions 0 and 1 readable and require an explicit migration for token management. Upload and delete accept any active token; download uses the unguessable transfer ID. Token administration is SSH/CLI-only.
 - Validate transfer IDs and archive paths. Reject traversal, absolute paths, symbolic links, special files, and extraction outside the selected destination.
 - Keep the root response generic and free of service or API details; it may expose only a generic readiness boolean. Detailed health information belongs at /healthz.
 - Keep storage size and expiry limits enforced on the server.
@@ -23,7 +23,7 @@ This file records the project's architecture and the constraints that changes mu
 
 ## Deployment files and secrets
 
-- Never commit real .env files, server/.sisy.json, server/.htaccess, .secretbox-config-path, upload tokens, private age identities, or transfer data.
+- Never commit real .env files, server/.sisy.json, server/.htaccess, server/.user.ini, .secretbox-config-path, upload tokens, private age identities, or transfer data.
 - Keep sanitized templates such as server/.sisy.example.json and server/.htaccess.example versioned.
 - The personal ss upload command uses rsync with deletion. Preserve its exclusions for secrets, local state, the real .sisy.json, .htaccess, and .secretbox-config-path.
 - The actual .htaccess is generated or host-maintained. Do not replace it during sync with the example file.

@@ -1,11 +1,37 @@
+{
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 300s
+			write 300s
+			idle 60s
+		}
+	}
+}
+
 {$SECRETBOX_DOMAIN} {
 	root * /var/www/html/public
-	php_fastcgi php:9000
-	file_server
+	@write {
+		method POST DELETE
+	}
+	route {
+		forward_auth @write php:9000 {
+			uri /bin/authorize.php
+			transport fastcgi {
+				root /var/www/html
+				split .php
+				read_timeout 10s
+			}
+		}
+		request_body {
+			max_size 104873984
+		}
+		php_fastcgi php:9000
+		file_server
+	}
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
 		-X-Powered-By
 	}
 }
-

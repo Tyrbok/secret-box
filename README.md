@@ -2,7 +2,7 @@
 
 SecretBox is a small, self-hosted tool for sending text, files, and folders between your own devices. The Python CLI encrypts each transfer with [age](https://age-encryption.org/) before upload. The PHP server stores and serves ciphertext; it never receives the passphrase or recipient private key.
 
-The project is designed for a single, self-managed server installation. The current server uses one upload token shared by authorized clients. Per-device upload tokens and individual revocation are not implemented.
+The project is designed for a single, self-managed server installation. The server supports a separate upload token for each device, with independent revocation from SSH. Tokens authorize uploads and deletion; age identities and passphrases protect content.
 
 ## Components
 
@@ -32,25 +32,25 @@ sb configure
 
 The installed command is **sb**. The installer uses **uv tool install**, which keeps the CLI in an isolated environment. For a development checkout, use **make dev/setup**.
 
-The configure command asks for the server URL and the upload token already configured on that server. The token must match on the server and every CLI allowed to upload or delete transfers. The CLI stores its configuration at **~/.config/secretbox/config.json** with private file permissions.
+The configure command asks for the server URL and the upload token already configured on that server. Give each CLI its own active token from the server. The CLI stores its configuration at **~/.config/secretbox/config.json** with private file permissions.
 
-SecretBox-owned JSON configuration files carry an independent **schema_version**. Existing client and server configurations without this field remain readable as legacy version 0; new client configuration writes use version 1. You do not need to reconfigure an existing server.
+SecretBox-owned JSON configuration files carry an independent **schema_version**. Existing client and server configurations without this field remain readable as legacy version 0; new client configuration writes use version 1 and new server configurations use version 2. Legacy server configurations continue to work; use the explicit migration in [Upload tokens](docs/upload-tokens.md) to enable independent device tokens.
 
 ## Set up the server
 
 ### Docker Compose
 
-Copy the example environment file and generate a strong random upload token:
+Copy the example environment file:
 
 ~~~sh
 cp deploy/.env.example deploy/.env
-openssl rand -hex 32
 ~~~
 
-Put the generated token in **deploy/.env** as **SECRETBOX_UPLOAD_TOKEN**. For local development, set **SECRETBOX_DOMAIN=:8080**. For production, set a domain whose DNS points to the server; Caddy will provision HTTPS for a valid public domain.
+Keep **SECRETBOX_UPLOAD_TOKEN** empty and retain the private registry path in **SECRETBOX_UPLOAD_TOKEN_FILE**. For local development, set **SECRETBOX_DOMAIN=:8080**. For production, set a domain whose DNS points to the server; Caddy will provision HTTPS for a valid public domain.
 
 ~~~sh
 docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
+docker compose --env-file deploy/.env -f deploy/compose.yaml exec --user www-data php php bin/tokens.php init desktop
 ~~~
 
 The **secretbox-data** volume stores encrypted transfers. Remove expired transfers with:
@@ -63,7 +63,7 @@ Schedule cleanup periodically with cron or a system timer. See [Operations](docs
 
 ### Shared PHP hosting
 
-The server can also run on shared hosting with PHP 8.1 or later. Upload the **server/** files to the web root, then run **php bin/configure.php** over SSH once. It creates a random upload token and stores it outside the web root. See the [shared hosting instructions](docs/operations.md#shared-php-hosting).
+The server can also run on shared hosting with PHP 8.1 or later. Upload the **server/** files to the web root, then run **php bin/configure.php** over SSH once. It creates an initial random token named **default** and stores its hash outside the web root. Create additional device tokens with **php bin/tokens.php add laptop**. See the [shared hosting instructions](docs/operations.md#shared-php-hosting).
 
 ## Usage
 
@@ -130,9 +130,15 @@ The real **server/.sisy.json** and **server/.htaccess** are ignored by Git. Only
 
 ## Security
 
-The server stores encrypted content and minimal transfer metadata. It cannot decrypt a transfer, but it can observe network metadata, delete ciphertext, or deny service. Downloads use a random transfer ID and do not require the upload token, so treat the ID as a secret link. The current shared upload token authorizes uploads and deletion for every client that has it.
+The server stores encrypted content and minimal transfer metadata. It cannot decrypt a transfer, but it can observe network metadata, delete ciphertext, or deny service. Downloads use a random transfer ID and do not require the upload token, so treat the ID as a secret link. Every active upload token authorizes uploads and deletion of known IDs. Revoke a compromised device token with **php bin/tokens.php revoke laptop**; other device tokens remain valid. See [Upload tokens](docs/upload-tokens.md).
 
 Read the [architecture](docs/architecture.md), [threat model](docs/threat-model.md), and [security reporting guide](SECURITY.md) before exposing an instance publicly.
+
+## Transfer security limits
+
+The CLI requires HTTPS. For local development only, set **SECRETBOX_ALLOW_HTTP_LOOPBACK=1** to allow HTTP to **localhost**, **127.0.0.1**, or **::1**. Saved upload tokens are bound to the configured server URL, including its path and port. Changing **--server** or **SECRETBOX_SERVER** cannot reuse that token for another endpoint; run **sb configure** or explicitly provide a destination-specific **SECRETBOX_TOKEN**. Downloads do not send an upload token.
+
+The client limits ciphertext to 100 MiB, decrypted compressed bundles to 128 MiB, extracted files to 2 GiB in total, and text to 16 MiB. Download and decryption each have a five-minute deadline. The server defaults to a 1 GiB storage quota and 1,000 transfers, and accepts one upload at a time. See [security controls and deployment updates](docs/security-controls.md).
 
 ## Acknowledgements
 

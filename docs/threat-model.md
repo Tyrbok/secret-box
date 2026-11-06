@@ -17,8 +17,14 @@
 ## Operational guidance
 
 - Serve the API over HTTPS. Do not expose PHP-FPM directly to the Internet.
-- Generate an instance upload token with at least 32 random bytes. Store it on the server and in the private configuration of each CLI authorized to upload or delete.
+- Generate an independent 32-byte random upload token for each device with the server CLI. Keep its hash on the server and its plaintext value in the private configuration of that device.
 - Keep transfer storage outside the web root and restrict access to the PHP runtime user.
 - Do not log tokens. Treat transfer IDs as bearer download links and limit proxy log retention.
 - Decryption and extraction happen locally. The CLI rejects unsafe archive paths and symbolic links in received bundles.
 - The CLI temporarily stores ciphertext and decrypted bundles in a private temporary directory and removes them when finished. File deletion does not guarantee physical erasure from SSDs, snapshots, or backups.
+
+## Resource and hosting boundaries
+
+Client size/time limits and server quotas bound individual operations; they do not provide full network denial-of-service protection. PHP may buffer multipart uploads before application authentication. The supplied Caddy configuration checks write credentials before forwarding to PHP and bounds request bodies and time. Shared hosting also needs provider-level request/concurrency controls; **.htaccess** and **.user.ini** only supply part of that protection.
+
+Other applications running as the same Unix user can read that user's private files. File permissions do not isolate applications sharing an account. Use a separate hosting user or service account when isolation is required. Revoking one device token blocks future uploads and deletes with that credential. It does not invalidate existing downloads by ID, remove already downloaded data, or revoke age identities. All active tokens have the same upload/delete privileges; they do not establish isolated tenants or prove sender identity.

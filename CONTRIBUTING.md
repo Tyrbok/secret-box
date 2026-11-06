@@ -12,7 +12,7 @@ SecretBox is a small personal project. Bug reports, security reports, and focuse
 
 ## Deployment configuration
 
-The tracked files server/.sisy.example.json and server/.htaccess.example are sanitized examples. The real server/.sisy.json and server/.htaccess are personal, untracked deployment files. Never replace the examples with those real files or commit them.
+The tracked files server/.sisy.example.json, server/.htaccess.example, and server/.user.ini.example are sanitized examples. The real server/.sisy.json, server/.htaccess, and server/.user.ini are personal, untracked deployment files. Never replace the examples with those real files or commit them.
 
 ## Security issues
 

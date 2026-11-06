@@ -10,6 +10,8 @@
     ".secretbox-config-path",
     ".htaccess.example",
     ".htaccess",
+    ".user.ini",
+    ".user.ini.example",
     ".git/",
     ".idea/",
     ".env",

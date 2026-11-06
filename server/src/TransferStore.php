@@ -6,12 +6,17 @@ namespace SecretBox;
 use LengthException;
 use RuntimeException;
 
+final class StorageQuotaException extends RuntimeException {}
+final class StorageBusyException extends RuntimeException {}
+
 final class TransferStore
 {
     private function __construct(
         private readonly string $directory,
         private readonly int $maxBytes,
         private readonly int $ttlSeconds,
+        private readonly int $maxTotalBytes,
+        private readonly int $maxTransfers,
     ) {
     }
 
@@ -48,11 +53,20 @@ final class TransferStore
         $directory = getenv('SECRETBOX_STORAGE_DIR') ?: self::defaultDirectory();
         $maxBytes = filter_var(getenv('SECRETBOX_MAX_BYTES') ?: '104857600', FILTER_VALIDATE_INT);
         $ttlSeconds = filter_var(getenv('SECRETBOX_TTL_SECONDS') ?: '86400', FILTER_VALIDATE_INT);
-        if ($maxBytes === false || $maxBytes < 1 || $ttlSeconds === false || $ttlSeconds < 60) {
+        $maxTotalBytes = filter_var(getenv('SECRETBOX_MAX_TOTAL_BYTES') ?: '1073741824', FILTER_VALIDATE_INT);
+        $maxTransfers = filter_var(getenv('SECRETBOX_MAX_TRANSFERS') ?: '1000', FILTER_VALIDATE_INT);
+        if ($maxBytes === false || $maxBytes < 1 || $ttlSeconds === false || $ttlSeconds < 60
+            || $maxTotalBytes === false || $maxTotalBytes < 1 || $maxTransfers === false || $maxTransfers < 1) {
             throw new RuntimeException('Invalid size or expiry configuration');
         }
         if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) {
             throw new RuntimeException('Could not create the storage directory');
+        }
+        $directory = realpath($directory);
+        $siteRoot = realpath(dirname(__DIR__));
+        if ($directory === false || $siteRoot === false || $directory === $siteRoot
+            || strncmp($directory, $siteRoot . DIRECTORY_SEPARATOR, strlen($siteRoot) + 1) === 0) {
+            throw new RuntimeException('Storage must be outside the application directory');
         }
         if (!chmod($directory, 0700)) {
             throw new RuntimeException('Could not restrict storage directory permissions');
@@ -60,11 +74,56 @@ final class TransferStore
         if (!is_writable($directory)) {
             throw new RuntimeException('Storage directory is not writable');
         }
-        return new self($directory, $maxBytes, $ttlSeconds);
+        return new self($directory, $maxBytes, $ttlSeconds, $maxTotalBytes, $maxTransfers);
     }
 
     /** @param resource $input */
     public function create($input): array
+    {
+        $lock = fopen($this->directory . '/.upload.lock', 'c');
+        if ($lock === false) {
+            throw new RuntimeException('Could not open the upload lock');
+        }
+        chmod($this->directory . '/.upload.lock', 0600);
+        try {
+            if (!flock($lock, LOCK_EX | LOCK_NB)) {
+                throw new StorageBusyException('Another upload is in progress; retry later');
+            }
+            foreach ($this->expiredIds() as $id) {
+                $this->delete($id);
+            }
+            // No other upload can be writing while this lock is held. Remove
+            // incomplete publications left behind by a terminated PHP worker.
+            $used = 0;
+            $count = 0;
+            foreach (new \DirectoryIterator($this->directory) as $entry) {
+                if (!$entry->isFile() || $entry->getFilename() === '.upload.lock') {
+                    continue;
+                }
+                $name = $entry->getFilename();
+                if (str_starts_with($name, '.upload-') || str_contains($name, '.json.tmp-')
+                    || (preg_match('/^([A-Za-z0-9_-]{32})\.age$/', $name, $matches)
+                        && !is_file($this->metadataPath($matches[1])))) {
+                    if (unlink($entry->getPathname())) {
+                        continue;
+                    }
+                }
+                $used += $entry->getSize();
+                if (preg_match('/^[A-Za-z0-9_-]{32}\.age$/', $name)) {
+                    $count++;
+                }
+            }
+            if ($count >= $this->maxTransfers || $used >= $this->maxTotalBytes) {
+                throw new StorageQuotaException('Storage quota exceeded');
+            }
+            return $this->createUnlocked($input, $this->maxTotalBytes - $used);
+        } finally {
+            fclose($lock);
+        }
+    }
+
+    /** @param resource $input */
+    private function createUnlocked($input, int $available): array
     {
         if (!is_resource($input)) {
             throw new RuntimeException('Could not read the request body');
@@ -100,6 +159,10 @@ final class TransferStore
                 $size += strlen($chunk);
                 if ($size > $this->maxBytes) {
                     throw new LengthException('Ciphertext exceeds the maximum size');
+                }
+                // Reserve space for the metadata as well as the ciphertext.
+                if ($size + 4096 > $available) {
+                    throw new StorageQuotaException('Storage quota exceeded');
                 }
                 if (fwrite($output, $chunk) !== strlen($chunk)) {
                     throw new RuntimeException('Error saving ciphertext');
