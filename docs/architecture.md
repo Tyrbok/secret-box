@@ -29,20 +29,21 @@ Configuration versions are independent of the API version, age bundle manifest v
 ## API v1
 
 - **GET /** returns a generic JSON object with an **ok** boolean. It is true when at least one valid token record is configured. It does not expose the token or identify the service, and it does not check storage permissions.
-- **POST /api/v1/transfers** requires **Authorization: Bearer <token>**, receives ciphertext as a multipart/form-data file, and returns **{ "id", "size", "created_at", "expires_at" }**.
-- **GET /api/v1/transfers/{id}** returns ciphertext. The random ID acts as a download capability; there is no public listing.
+- **POST /api/v1/transfers** requires **Authorization: Bearer <token>**, receives ciphertext as a multipart/form-data file, and accepts an optional multipart **listable** text field (**true** or **false**, default **false**). It returns **{ "id", "size", "created_at", "expires_at", "listable" }**. Raw ciphertext uploads remain supported and unlisted.
+- **GET /api/v1/transfers** is public and returns **{ "transfers": [...], "next_cursor": null | "ID" }**. Only explicitly listable, unexpired transfers with available ciphertext appear. Pages contain at most 100 entries ordered by ID; pass **?after=ID** for the next page. Invalid cursors return **400**. Concurrent uploads may require a fresh traversal.
+- **GET /api/v1/transfers/{id}** returns ciphertext. The random ID acts as a download capability for both listed and unlisted transfers.
 - **DELETE /api/v1/transfers/{id}** requires an active upload token and deletes the transfer.
 - **GET /healthz** returns basic status without transfer data.
 - The API supports installation under a path prefix such as **/sites/secret-box**.
 
-The server generates IDs from 24 random bytes encoded as URL-safe Base64 without padding. It stores the ciphertext and a JSON sidecar with size and expiry metadata. Storage is outside the public directory when the hosting environment supports it.
+The server generates IDs from 24 random bytes encoded as URL-safe Base64 without padding. It stores the ciphertext and a JSON sidecar with size, expiry, and a boolean **listable** flag. A missing flag means unlisted, preserving legacy sidecars without a migration. This additive metadata field does not change either configuration schema. Original filenames remain in the encrypted bundle. Storage is outside the public directory when the hosting environment supports it.
 
 ## Initial limits
 
 - Upload size is configurable and defaults to 100 MiB.
 - Transfer expiry is configurable and defaults to 24 hours.
-- Downloads do not require the upload token, allowing another device to fetch ciphertext. Treat the ID as secret; by itself, it cannot decrypt the transfer.
-- Version 1 has no web panel, accounts, public listing, sender signatures, or one-time downloads.
+- Downloads do not require the upload token, allowing another device to fetch ciphertext. Treat unlisted IDs as secret; by itself, it cannot decrypt the transfer.
+- Version 1 has no web panel, accounts, sender signatures, or one-time downloads.
 - The server can observe IP addresses, time, size, and transfer frequency. It can delete or retain ciphertext. It cannot recover content if passphrases and private identities remain off the server.
 
 ## Resource boundaries

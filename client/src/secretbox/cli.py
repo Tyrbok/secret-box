@@ -12,7 +12,7 @@ from pathlib import Path
 from . import __version__
 from .age import decrypt_bundle, encrypt_bundle, generate_identity
 from .api import delete as delete_transfer
-from .api import download, upload
+from .api import download, list_transfers, upload
 from .bundle import extract_bundle
 from .config import configure, connection_settings, identity_dir, server_setting
 
@@ -32,6 +32,12 @@ def _parser() -> argparse.ArgumentParser:
     send_parser.add_argument("--text", action="store_true", help="Read text from standard input")
     send_parser.add_argument("--recipient", help="Recipient device's age public key")
     send_parser.add_argument("--server", help="Override the configured server URL")
+
+    send_parser.add_argument("--listable", action="store_true", help="Include this encrypted transfer in the listing")
+
+    list_parser = subparsers.add_parser("list", help="List discoverable, unexpired transfers")
+    list_parser.add_argument("--server", help="Override the configured server URL")
+    list_parser.add_argument("--after", help="Fetch the page after this transfer ID")
 
     receive_parser = subparsers.add_parser("receive", help="Download, decrypt, and restore a transfer")
     receive_parser.add_argument("transfer_id", help="32-character transfer ID")
@@ -69,14 +75,54 @@ def _send(args: argparse.Namespace) -> None:
     with tempfile.TemporaryDirectory(prefix="secretbox-") as temporary:
         encrypted = Path(temporary) / "transfer.age"
         encrypt_bundle(encrypted, source=source, text=text, recipient=args.recipient)
-        result = upload(server, token, encrypted)
+        result = upload(server, token, encrypted, listable=args.listable)
     transfer_id = result.get("id")
     expires = result.get("expires_at")
     if not isinstance(transfer_id, str) or not TRANSFER_ID.fullmatch(transfer_id):
         raise RuntimeError("The server returned an invalid transfer ID")
+    if args.listable and result.get("listable") is not True:
+        raise RuntimeError(
+            f"Transfer {transfer_id} was uploaded, but the server did not confirm public listing; "
+            "update the server to support --listable"
+        )
     print(f"ID: {transfer_id}")
     print(f"Expires: {expires}")
+    print(f"Listable: {'yes' if args.listable else 'no'}")
     print("Share the ID. If you used a passphrase, share it through another channel.")
+
+
+def _list(args: argparse.Namespace) -> None:
+    after = _check_id(args.after) if args.after else None
+    server = server_setting(args.server)
+    result = list_transfers(server, after)
+    rows = result["transfers"]
+    if not isinstance(rows, list) or len(rows) > 100:
+        raise RuntimeError("The server returned an invalid listing")
+    lines = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RuntimeError("The server returned an invalid listing")
+        transfer_id = row.get("id")
+        size = row.get("size")
+        dates = [row.get("created_at"), row.get("expires_at")]
+        if (not isinstance(transfer_id, str) or not TRANSFER_ID.fullmatch(transfer_id)
+                or type(size) is not int or size < 1
+                or any(not isinstance(date, str) or not date.isascii()
+                       or any(c not in "0123456789-T:+.Z" for c in date) for date in dates)):
+            raise RuntimeError("The server returned an invalid listing")
+        lines.append(f"{transfer_id}\t{size}\t{dates[0]}\t{dates[1]}")
+    cursor = result.get("next_cursor")
+    if cursor is not None:
+        if not isinstance(cursor, str):
+            raise RuntimeError("The server returned an invalid listing cursor")
+        _check_id(cursor)
+    if lines:
+        print("ID\tBYTES\tCREATED\tEXPIRES")
+        print("\n".join(lines))
+    else:
+        print("No listable transfers.")
+    if cursor:
+        print(f"Next page: sb list --after {cursor}")
 
 
 def _receive(args: argparse.Namespace) -> None:
@@ -114,6 +160,8 @@ def main() -> None:
             configure()
         elif args.command == "send":
             _send(args)
+        elif args.command == "list":
+            _list(args)
         elif args.command == "receive":
             _receive(args)
         elif args.command == "delete":

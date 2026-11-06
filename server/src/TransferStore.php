@@ -78,7 +78,7 @@ final class TransferStore
     }
 
     /** @param resource $input */
-    public function create($input): array
+    public function create($input, bool $listable = false): array
     {
         $lock = fopen($this->directory . '/.upload.lock', 'c');
         if ($lock === false) {
@@ -116,14 +116,14 @@ final class TransferStore
             if ($count >= $this->maxTransfers || $used >= $this->maxTotalBytes) {
                 throw new StorageQuotaException('Storage quota exceeded');
             }
-            return $this->createUnlocked($input, $this->maxTotalBytes - $used);
+            return $this->createUnlocked($input, $this->maxTotalBytes - $used, $listable);
         } finally {
             fclose($lock);
         }
     }
 
     /** @param resource $input */
-    private function createUnlocked($input, int $available): array
+    private function createUnlocked($input, int $available, bool $listable): array
     {
         if (!is_resource($input)) {
             throw new RuntimeException('Could not read the request body');
@@ -191,6 +191,7 @@ final class TransferStore
             'created_at' => gmdate(DATE_ATOM, $created),
             'expires_at' => gmdate(DATE_ATOM, $expires),
             'expires_epoch' => $expires,
+            'listable' => $listable,
         ];
         $encoded = json_encode($metadata, JSON_UNESCAPED_SLASHES);
         if ($encoded === false || file_put_contents($metadataTemporary, $encoded, LOCK_EX) === false) {
@@ -214,7 +215,40 @@ final class TransferStore
             'size' => $size,
             'created_at' => $metadata['created_at'],
             'expires_at' => $metadata['expires_at'],
+            'listable' => $listable,
         ];
+    }
+
+    /** Return at most 100 discoverable transfers, ordered by ID. */
+    public function listing(string $after = ''): array
+    {
+        $transfers = [];
+        $now = time();
+        $paths = glob($this->directory . '/*.json') ?: [];
+        sort($paths, SORT_STRING);
+        foreach ($paths as $path) {
+            $id = basename($path, '.json');
+            if (!preg_match('/^[A-Za-z0-9_-]{32}$/D', $id) || strcmp($id, $after) <= 0) {
+                continue;
+            }
+            $metadata = $this->readMetadata($id);
+            // Legacy transfers have no visibility flag and stay undiscoverable.
+            if ($metadata === null || ($metadata['listable'] ?? false) !== true
+                || ($metadata['expires_epoch'] ?? 0) <= $now || !is_file($this->dataPath($id))) {
+                continue;
+            }
+            if (count($transfers) === 100) {
+                return ['transfers' => $transfers, 'next_cursor' => $transfers[99]['id']];
+            }
+            $transfers[] = [
+                'id' => $id,
+                'size' => $metadata['size'],
+                'created_at' => $metadata['created_at'],
+                'expires_at' => $metadata['expires_at'],
+                'listable' => true,
+            ];
+        }
+        return ['transfers' => $transfers, 'next_cursor' => null];
     }
 
     public function pathForDownload(string $id): ?string

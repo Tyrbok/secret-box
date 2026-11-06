@@ -44,7 +44,7 @@ def _error_body(response: http.client.HTTPResponse) -> str:
     return f"HTTP {response.status} {response.reason}"
 
 
-def upload(server: str, token: str, encrypted_path: Path) -> dict[str, object]:
+def upload(server: str, token: str, encrypted_path: Path, *, listable: bool = False) -> dict[str, object]:
     connection, prefix = _connection(server)
     endpoint = f"{prefix}/api/v1/transfers"
     size = encrypted_path.stat().st_size
@@ -52,13 +52,18 @@ def upload(server: str, token: str, encrypted_path: Path) -> dict[str, object]:
         connection.close()
         raise ValueError("Ciphertext exceeds the client's 100 MiB limit")
     boundary = "secretbox-" + secrets.token_hex(16)
+    visibility_field = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="listable"\r\n\r\n'
+        f"{'true' if listable else 'false'}\r\n"
+    ).encode("ascii")
     file_header = (
         f"--{boundary}\r\n"
         'Content-Disposition: form-data; name="ciphertext"; filename="secretbox.age"\r\n'
         "Content-Type: application/octet-stream\r\n\r\n"
     ).encode("ascii")
     closing_boundary = f"\r\n--{boundary}--\r\n".encode("ascii")
-    content_length = len(file_header) + size + len(closing_boundary)
+    content_length = len(visibility_field) + len(file_header) + size + len(closing_boundary)
     try:
         connection.putrequest("POST", endpoint)
         connection.putheader("Authorization", f"Bearer {token}")
@@ -66,6 +71,7 @@ def upload(server: str, token: str, encrypted_path: Path) -> dict[str, object]:
         connection.putheader("Content-Length", str(content_length))
         connection.putheader("Connection", "close")
         connection.endheaders()
+        connection.send(visibility_field)
         connection.send(file_header)
         with encrypted_path.open("rb") as source:
             while chunk := source.read(1024 * 1024):
@@ -163,3 +169,33 @@ def delete(server: str, token: str, transfer_id: str) -> None:
     finally:
         connection.close()
 
+
+
+def list_transfers(server: str, after: str | None = None) -> dict[str, object]:
+    """Fetch one bounded page; callers can follow next_cursor."""
+    if after is not None and (len(after) != 32 or any(c not in
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for c in after)):
+        raise ValueError("Invalid listing cursor")
+    connection, prefix = _connection(server)
+    endpoint = f"{prefix}/api/v1/transfers"
+    if after is not None:
+        endpoint += f"?after={after}"
+    try:
+        connection.request("GET", endpoint, headers={"Connection": "close"})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise RuntimeError(_error_body(response))
+        body = response.read(65537)
+        if len(body) > 65536:
+            raise RuntimeError("Transfer listing exceeds the response limit")
+        try:
+            data = json.loads(body)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise RuntimeError("The server returned an invalid JSON listing") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("transfers"), list):
+            raise RuntimeError("The server returned an invalid listing")
+        return data
+    except http.client.HTTPException as exc:
+        raise RuntimeError(f"HTTP listing error: {exc}") from exc
+    finally:
+        connection.close()

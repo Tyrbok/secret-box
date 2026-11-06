@@ -85,6 +85,21 @@ sb send --text < message.txt
 
 Share the transfer ID printed by **sb**. Share the passphrase through a different channel.
 
+### List transfers
+
+Transfers are unlisted by default. To publish an encrypted transfer in the public listing:
+
+~~~sh
+sb send --listable ./report.pdf
+sb send --listable --text < message.txt
+sb list
+sb list --server https://secretbox.example.com
+~~~
+
+The listing requires no token and shows transfer IDs, ciphertext sizes in bytes, creation times, and expiry times. Original filenames and content remain encrypted. Anyone can discover and download listed ciphertext; decryption still requires the passphrase or recipient identity. Unlisted transfers can only be downloaded by someone who knows their ID. Existing transfers remain unlisted.
+
+Each page contains at most 100 transfers ordered by ID. When more are available, the CLI prints a cursor for **sb list --after TRANSFER_ID**; retain **--server** if you used an override. Expired and deleted transfers disappear from the listing. Visibility is chosen at upload time.
+
 ### Receive a transfer
 
 ~~~sh
@@ -130,7 +145,7 @@ The real **server/.sisy.json** and **server/.htaccess** are ignored by Git. Only
 
 ## Security
 
-The server stores encrypted content and minimal transfer metadata. It cannot decrypt a transfer, but it can observe network metadata, delete ciphertext, or deny service. Downloads use a random transfer ID and do not require the upload token, so treat the ID as a secret link. Every active upload token authorizes uploads and deletion of known IDs. Revoke a compromised device token with **php bin/tokens.php revoke laptop**; other device tokens remain valid. See [Upload tokens](docs/upload-tokens.md).
+The server stores encrypted content and minimal transfer metadata. It cannot decrypt a transfer, but it can observe network metadata, delete ciphertext, or deny service. Downloads use a random transfer ID and do not require the upload token, so treat an unlisted transfer ID as a secret link. Using **--listable** publishes that ID and its size and timestamps to everyone. Every active upload token authorizes uploads and deletion of known IDs. Revoke a compromised device token with **php bin/tokens.php revoke laptop**; other device tokens remain valid. See [Upload tokens](docs/upload-tokens.md).
 
 Read the [architecture](docs/architecture.md), [threat model](docs/threat-model.md), and [security reporting guide](SECURITY.md) before exposing an instance publicly.
 

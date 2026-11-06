@@ -4,7 +4,7 @@
 
 - Content confidentiality from the server operator, hosting provider, or anyone who obtains only a copy of server storage.
 - Ciphertext integrity in storage and transit through age and HTTPS.
-- Casual download access through random, hard-to-guess transfer IDs.
+- Casual download access to unlisted transfers through random, hard-to-guess transfer IDs. Explicitly listable transfers publish their IDs, ciphertext sizes, and timestamps without authentication. Their content still requires age decryption.
 
 ## What SecretBox does not protect
 
@@ -19,7 +19,7 @@
 - Serve the API over HTTPS. Do not expose PHP-FPM directly to the Internet.
 - Generate an independent 32-byte random upload token for each device with the server CLI. Keep its hash on the server and its plaintext value in the private configuration of that device.
 - Keep transfer storage outside the web root and restrict access to the PHP runtime user.
-- Do not log tokens. Treat transfer IDs as bearer download links and limit proxy log retention.
+- Do not log tokens. Treat unlisted transfer IDs as bearer download links and limit proxy log retention.
 - Decryption and extraction happen locally. The CLI rejects unsafe archive paths and symbolic links in received bundles.
 - The CLI temporarily stores ciphertext and decrypted bundles in a private temporary directory and removes them when finished. File deletion does not guarantee physical erasure from SSDs, snapshots, or backups.
 

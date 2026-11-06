@@ -64,9 +64,26 @@ if ($method === 'GET' && $requestPath === '/healthz') {
     respond(200, ['status' => 'ok']);
 }
 
+if ($method === 'GET' && $requestPath === '/api/v1/transfers') {
+    $after = $_GET['after'] ?? '';
+    if (!is_string($after) || ($after !== '' && !preg_match('/^[A-Za-z0-9_-]{32}$/D', $after))) {
+        respond(400, ['error' => 'Invalid listing cursor']);
+    }
+    try {
+        respond(200, TransferStore::fromEnvironment()->listing($after));
+    } catch (Throwable $exception) {
+        error_log('secretbox listing failed: ' . $exception->getMessage());
+        respond(500, ['error' => 'Could not list transfers']);
+    }
+}
+
 if ($method === 'POST' && $requestPath === '/api/v1/transfers') {
     require_instance_token();
     try {
+        $listable = $_POST['listable'] ?? 'false';
+        if (!is_string($listable) || !in_array($listable, ['true', 'false'], true)) {
+            respond(400, ['error' => 'listable must be true or false']);
+        }
         $contentType = strtolower($_SERVER['CONTENT_TYPE'] ?? '');
         if (strpos($contentType, 'multipart/form-data') === 0) {
             $upload = $_FILES['ciphertext'] ?? null;
@@ -92,7 +109,7 @@ if ($method === 'POST' && $requestPath === '/api/v1/transfers') {
         }
         try {
             $store = TransferStore::fromEnvironment();
-            $result = $store->create($input);
+            $result = $store->create($input, $listable === 'true');
         } finally {
             fclose($input);
         }

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: secret-box API
-  version: 1.1.0
+  version: 1.2.0
   description: Opaque storage API for age-encrypted ciphertext.
 servers:
   - url: https://secretbox.example.com
@@ -22,6 +22,43 @@ paths:
                   ok:
                     type: boolean
   /api/v1/transfers:
+    get:
+      summary: List publicly discoverable transfers
+      description: Public, unauthenticated listing. Only explicitly listable, unexpired transfers with ciphertext are included. Original filenames remain encrypted. Ordered by ID, with at most 100 entries per page. Concurrent uploads may appear on a later traversal.
+      security: []
+      parameters:
+        - name: after
+          in: query
+          description: Exclusive transfer ID cursor returned as next_cursor.
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{32}$'
+      responses:
+        '200':
+          description: A page of public transfer metadata
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transfers, next_cursor]
+                properties:
+                  transfers:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Transfer'
+                  next_cursor:
+                    type: [string, 'null']
+                    pattern: '^[A-Za-z0-9_-]{32}$'
+        '400':
+          description: Invalid listing cursor
+        '500':
+          description: Could not list transfers
     post:
       summary: Create a transfer
       description: Requires any active upload token. Tokens are managed and revoked through the server CLI.
@@ -38,6 +75,10 @@ paths:
                 ciphertext:
                   type: string
                   format: binary
+                listable:
+                  type: boolean
+                  default: false
+                  description: Send as the multipart text value true or false. True publishes the transfer ID, ciphertext size, and timestamps in the unauthenticated listing. Omitted means unlisted.
       responses:
         '201':
           description: Transfer stored
@@ -45,6 +86,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Transfer'
+        '400':
+          description: Invalid upload or listable field (must be true or false)
         '401':
           description: Upload token is missing, invalid, or revoked
         '413':
@@ -106,8 +149,11 @@ components:
   schemas:
     Transfer:
       type: object
-      required: [id, size, created_at, expires_at]
+      required: [id, size, created_at, expires_at, listable]
       properties:
+        listable:
+          type: boolean
+          description: Whether this transfer is publicly discoverable. This does not change age encryption or download authorization by ID.
         id:
           type: string
           pattern: '^[A-Za-z0-9_-]{32}$'
