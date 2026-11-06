@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import selectors
+import time
 from pathlib import Path
-from typing import BinaryIO
 
 from .bundle import write_bundle
+from .limits import MAX_BUNDLE_BYTES, TRANSFER_TIMEOUT_SECONDS
 
 
 def _binary(name: str) -> str:
@@ -57,10 +59,41 @@ def decrypt_bundle(encrypted_path: Path, bundle_path: Path, identities: list[Pat
     command = [age, "--decrypt"]
     for identity in identities:
         command.extend(["--identity", str(identity.expanduser())])
-    command.extend(["--output", str(bundle_path), str(encrypted_path)])
-    result = subprocess.run(command, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(f"age exited with status {result.returncode}")
+    command.append(str(encrypted_path))
+    deadline = time.monotonic() + TRANSFER_TIMEOUT_SECONDS
+    descriptor = os.open(bundle_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as output, subprocess.Popen(command, stdout=subprocess.PIPE) as process:
+            assert process.stdout is not None
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    size = 0
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not selector.select(remaining):
+                            raise RuntimeError("Decryption exceeded the time limit")
+                        chunk = os.read(process.stdout.fileno(), 65536)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > MAX_BUNDLE_BYTES:
+                            raise RuntimeError("Decrypted bundle exceeds the 128 MiB limit")
+                        output.write(chunk)
+                status = process.wait(timeout=max(0.01, deadline - time.monotonic()))
+                if status != 0:
+                    raise RuntimeError(f"age exited with status {status}")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                process.stdout.close()
+    except subprocess.TimeoutExpired as exc:
+        bundle_path.unlink(missing_ok=True)
+        raise RuntimeError("Decryption exceeded the time limit") from exc
+    except BaseException:
+        bundle_path.unlink(missing_ok=True)
+        raise
 
 
 def generate_identity(name: str, identities_dir: Path) -> tuple[Path, str]:

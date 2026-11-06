@@ -6,7 +6,6 @@ import gzip
 import io
 import json
 import os
-import shutil
 import sys
 import tarfile
 import tempfile
@@ -18,6 +17,7 @@ MANIFEST = "secretbox-manifest.json"
 MAX_MANIFEST_BYTES = 16 * 1024
 MAX_ARCHIVE_ENTRIES = 100_000
 MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_TEXT_BYTES = 16 * 1024 * 1024
 
 
 def _safe_name(name: str) -> str:
@@ -164,6 +164,8 @@ def _extract_to_stage(archive: tarfile.TarFile, stage: Path, manifest: dict[str,
         total_size += member.size
         if member.size < 0 or total_size > MAX_EXTRACTED_BYTES:
             raise ValueError("Content exceeds the local extraction limit")
+        if kind == "text" and member.size > MAX_TEXT_BYTES:
+            raise ValueError("Text exceeds the 16 MiB limit")
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         source = archive.extractfile(member)
         if source is None:
@@ -199,21 +201,30 @@ def extract_bundle(bundle_path: Path, output_path: Path | None = None) -> Path |
         manifest, manifest_entry = _read_manifest(archive)
         kind = str(manifest["kind"])
         name = str(manifest["name"])
-        with tempfile.TemporaryDirectory(prefix="secretbox-unpack-") as temporary:
+        target = (output_path.expanduser() if output_path else Path(name)).absolute()
+        to_stdout = kind == "text" and output_path is None
+        if not to_stdout:
+            if target.exists() or target.is_symlink():
+                raise FileExistsError(f"Destination already exists: {target}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+        # Stage on the destination filesystem: publishing must never copy plaintext
+        # through a destination file with permissions inherited from the umask.
+        with tempfile.TemporaryDirectory(
+            prefix=".secretbox-unpack-", dir=None if to_stdout else target.parent
+        ) as temporary:
             stage = Path(temporary)
             extracted = _extract_to_stage(archive, stage, manifest, manifest_entry.offset)
-            if kind == "text" and output_path is None:
+            if to_stdout:
                 text = extracted.read_bytes().decode("utf-8")
                 sys.stdout.write(text)
                 return None
-            if kind == "text":
-                target = output_path.expanduser() if output_path else Path(name)
-            else:
-                target = output_path.expanduser() if output_path else Path(name)
-            target = target.absolute()
             if target.exists() or target.is_symlink():
-                raise FileExistsError(f"El destino ya existe: {target}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(extracted), str(target))
+                raise FileExistsError(f"Destination already exists: {target}")
+            if extracted.is_file():
+                os.link(extracted, target)  # Atomic publication without replacing a file.
+            else:
+                for directory, _, _ in os.walk(extracted):
+                    os.chmod(directory, 0o700)
+                os.rename(extracted, target)
             return target
 

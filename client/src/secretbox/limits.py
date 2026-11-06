@@ -1,0 +1,5 @@
+"""Resource ceilings for untrusted transfers."""
+
+MAX_CIPHERTEXT_BYTES = 100 * 1024 * 1024
+MAX_BUNDLE_BYTES = 128 * 1024 * 1024
+TRANSFER_TIMEOUT_SECONDS = 300

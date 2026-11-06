@@ -49,6 +49,13 @@ def validate_server(server: str) -> str:
         raise ValueError("Do not include credentials in the server URL")
     if parsed.query or parsed.fragment:
         raise ValueError("Server URL must not include a query or fragment")
+    if not parsed.hostname or parsed.port == 0:
+        raise ValueError("Server URL must include a valid host and port")
+    if parsed.scheme != "https" and not (
+        parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        and os.environ.get("SECRETBOX_ALLOW_HTTP_LOOPBACK") == "1"
+    ):
+        raise ValueError("HTTPS is required. For local development only, set SECRETBOX_ALLOW_HTTP_LOOPBACK=1.")
     return server.rstrip("/")
 
 
@@ -98,10 +105,20 @@ def server_setting(server_override: str | None = None) -> str:
 def connection_settings(server_override: str | None = None) -> tuple[str, str]:
     config = read_config()
     server = server_setting(server_override)
-    token = os.environ.get("SECRETBOX_TOKEN") or config.get("token")
+    token = os.environ.get("SECRETBOX_TOKEN")
+    if not token:
+        configured = config.get("server")
+        if not configured or _server_scope(server) != _server_scope(validate_server(configured)):
+            raise RuntimeError("Refusing to send the saved token to a different server. Run sb configure or explicitly set SECRETBOX_TOKEN for this destination.")
+        token = config.get("token")
     if not token:
         raise RuntimeError("Upload token is missing. Run sb configure on an authorized device.")
     return server, token
+
+
+def _server_scope(server: str) -> tuple[str, str | None, int, str]:
+    parsed = urlsplit(server)
+    return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), parsed.path.rstrip("/")
 
 
 def identity_dir() -> Path:

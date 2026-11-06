@@ -6,12 +6,18 @@ import http.client
 import json
 import secrets
 import ssl
+import socket
+import threading
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .config import validate_server
+from .limits import MAX_CIPHERTEXT_BYTES, TRANSFER_TIMEOUT_SECONDS
+
 
 def _connection(server: str) -> tuple[http.client.HTTPConnection, str]:
-    parsed = urlsplit(server)
+    parsed = urlsplit(validate_server(server))
     prefix = parsed.path.rstrip("/")
     if parsed.scheme == "https":
         connection: http.client.HTTPConnection = http.client.HTTPSConnection(
@@ -42,6 +48,9 @@ def upload(server: str, token: str, encrypted_path: Path) -> dict[str, object]:
     connection, prefix = _connection(server)
     endpoint = f"{prefix}/api/v1/transfers"
     size = encrypted_path.stat().st_size
+    if size > MAX_CIPHERTEXT_BYTES:
+        connection.close()
+        raise ValueError("Ciphertext exceeds the client's 100 MiB limit")
     boundary = "secretbox-" + secrets.token_hex(16)
     file_header = (
         f"--{boundary}\r\n"
@@ -95,17 +104,45 @@ def _error_body_from_bytes(status: int, reason: str, body: bytes) -> str:
 def download(server: str, transfer_id: str, destination: Path) -> None:
     connection, prefix = _connection(server)
     endpoint = f"{prefix}/api/v1/transfers/{transfer_id}"
+    watchdog = None
+    started = time.monotonic()
     try:
+        connection.connect()
+        transport = connection.sock
+        def interrupt() -> None:
+            if transport is not None:
+                try:
+                    transport.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        watchdog = threading.Timer(TRANSFER_TIMEOUT_SECONDS, interrupt)
+        watchdog.daemon = True
+        watchdog.start()
         connection.request("GET", endpoint, headers={"Connection": "close"})
         response = connection.getresponse()
         if response.status != 200:
             raise RuntimeError(_error_body(response))
-        with destination.open("wb") as output:
-            while chunk := response.read(1024 * 1024):
+        declared = response.getheader("Content-Length")
+        if declared is not None and (not declared.isdigit() or int(declared) > MAX_CIPHERTEXT_BYTES):
+            raise RuntimeError("Invalid or oversized ciphertext response")
+        size = 0
+        with destination.open("xb") as output:
+            while chunk := response.read1(65536):
+                size += len(chunk)
+                if size > MAX_CIPHERTEXT_BYTES:
+                    raise RuntimeError("Ciphertext exceeds the client's 100 MiB limit")
+                if time.monotonic() - started >= TRANSFER_TIMEOUT_SECONDS:
+                    raise RuntimeError("Download exceeded the time limit")
                 output.write(chunk)
+        if time.monotonic() - started >= TRANSFER_TIMEOUT_SECONDS:
+            raise RuntimeError("Download exceeded the time limit")
+        if declared is not None and size != int(declared):
+            raise RuntimeError("Ciphertext response is truncated")
     except http.client.HTTPException as exc:
         raise RuntimeError(f"HTTP download error: {exc}") from exc
     finally:
+        if watchdog is not None:
+            watchdog.cancel()
         connection.close()
 
 
